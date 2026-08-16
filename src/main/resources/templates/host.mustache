@@ -1,0 +1,38 @@
+{{> header}}
+
+<h1>Host a game</h1>
+
+<div class="join-card">
+  <p>On each phone, open a browser and go to:</p>
+  {{#joinUrls}}
+    <p class="join-url">{{.}}</p>
+  {{/joinUrls}}
+  {{^joinUrls}}
+    <p class="error">Couldn't work out this machine's network address. Check you're on Wi-Fi.</p>
+  {{/joinUrls}}
+  <p class="join-hint">Everyone must be on the same Wi-Fi. Room code <strong>{{code}}</strong>.</p>
+</div>
+
+<div id="room"></div>
+
+<form method="post" action="/host/start">
+  <button type="submit">Start game</button>
+</form>
+
+<div class="host-actions">
+  <form method="post" action="/host/reset">
+    <button type="submit" class="secondary">Play again (keep players)</button>
+  </form>
+  <form method="post" action="/host/close">
+    <button type="submit" class="secondary">Close room</button>
+  </form>
+</div>
+
+<p><a href="/">Back to home</a></p>
+
+<script src="/js/room.js"></script>
+<script>
+  startRoom({ code: '{{code}}', mount: document.getElementById('room') });
+</script>
+
+{{> footer}}

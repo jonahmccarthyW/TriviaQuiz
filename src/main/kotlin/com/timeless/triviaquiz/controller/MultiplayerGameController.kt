@@ -5,6 +5,7 @@ import com.timeless.triviaquiz.game.MpCategory
 import com.timeless.triviaquiz.game.MpPlayer
 import com.timeless.triviaquiz.game.MultiplayerGame
 import com.timeless.triviaquiz.game.TurnOutcome
+import com.timeless.triviaquiz.service.QuestionDealer
 import com.timeless.triviaquiz.service.TriviaQuestionService
 import jakarta.servlet.http.HttpSession
 import org.springframework.stereotype.Controller
@@ -22,7 +23,8 @@ import org.springframework.web.bind.annotation.RequestParam
  */
 @Controller
 class MultiplayerGameController(
-    private val triviaQuestionService: TriviaQuestionService
+    private val triviaQuestionService: TriviaQuestionService,
+    private val questionDealer: QuestionDealer
 ) {
     companion object {
         const val ROSTER_KEY = "mpPlayers"
@@ -95,7 +97,7 @@ class MultiplayerGameController(
         val game = game(session) ?: return "redirect:/multiplayer"
         if (game.isOver) return "redirect:/multiplayer/winner"
 
-        if (game.currentQuestion == null && !fetchNextQuestion(game)) {
+        if (game.currentQuestion == null && !questionDealer.dealNextQuestion(game)) {
             // No question could be fetched for anyone (e.g. API unavailable).
             model["title"] = "Multiplayer Trivia"
             model["message"] = "Couldn't fetch a question right now. Please try again."
@@ -183,28 +185,6 @@ class MultiplayerGameController(
         session.removeAttribute(ROSTER_KEY)
         session.removeAttribute(GAME_KEY)
         return "redirect:/multiplayer"
-    }
-
-    /**
-     * Fetches a question for the current player at the current difficulty, trying each remaining
-     * category until one yields a question. If none do, the turn ends and the next player is tried;
-     * returns false only if no player could be given a question (bounded to avoid looping forever).
-     */
-    private suspend fun fetchNextQuestion(game: MultiplayerGame): Boolean {
-        repeat(game.players.size) {
-            for (category in game.currentPlayer.remainingCategories().shuffled()) {
-                val question = triviaQuestionService
-                    .getBufferedQuestion(category.id, game.currentDifficulty)
-                if (question != null) {
-                    game.currentQuestion = question
-                    game.currentCategoryId = category.id
-                    return true
-                }
-            }
-            // Nothing available for this player at this difficulty — pass the turn on.
-            game.endTurn()
-        }
-        return false
     }
 
     /** Populates the setup model with categories and the current roster. */

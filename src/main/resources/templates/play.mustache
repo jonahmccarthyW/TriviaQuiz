@@ -1,0 +1,18 @@
+{{> header}}
+
+{{! Everything below #room is drawn by room.js from the polled state, because what this device
+    should be showing changes when other devices act. }}
+<div id="room">
+  <p class="room-status">Connecting...</p>
+</div>
+
+<form method="post" action="/play/leave" class="leave">
+  <button type="submit" class="secondary">Leave game</button>
+</form>
+
+<script src="/js/room.js"></script>
+<script>
+  startRoom({ code: '{{code}}', mount: document.getElementById('room') });
+</script>
+
+{{> footer}}

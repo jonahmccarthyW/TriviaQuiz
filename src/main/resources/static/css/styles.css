@@ -87,8 +87,9 @@ button:disabled {
   border-color: #aab7c6;
   cursor: not-allowed;
 }
-/* Secondary buttons (e.g. Remove, Pick random) */
+/* Secondary buttons (e.g. Remove, Pick random, host controls) */
 button[type="button"],
+button.secondary,
 form[action$="/remove"] button,
 form[action$="/clear"] button {
   color: var(--blue);
@@ -96,6 +97,7 @@ form[action$="/clear"] button {
   border-color: var(--border);
 }
 button[type="button"]:hover,
+button.secondary:hover,
 form[action$="/remove"] button:hover,
 form[action$="/clear"] button:hover {
   color: var(--blue-dark);
@@ -203,3 +205,56 @@ ol li, ul li { margin: 0.4em 0; }
 
 /* Timer emphasis on the single-player game screen. */
 #timer { color: var(--blue); font-variant-numeric: tabular-nums; }
+
+/* ---- Networked game ---- */
+
+/* The host screen's "type this into your phone" card. */
+.join-card {
+  background: var(--navy);
+  color: #fff;
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin: 0 0 24px;
+}
+.join-card p { margin: 0 0 8px; }
+.join-card .error { margin: 8px 0 0; }
+.join-url {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #7fb0ff;
+  word-break: break-all;
+  font-variant-numeric: tabular-nums;
+}
+.join-hint { color: #9db4cd; font-size: 0.92rem; }
+
+/* Status headline drawn by room.js ("Your turn", "Dave's turn", ...). */
+.room-status { margin: 0 0 12px; color: var(--navy); }
+
+/* The live roster. Reuses .player from the hotseat setup screen. */
+.roster { margin: 0 0 20px; }
+.roster .player.current {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18), var(--shadow);
+}
+
+.question-meta { color: var(--muted); font-size: 0.92rem; margin: 0 0 10px; }
+
+/* Answers are full-width tap targets — these are read on a phone, one thumb. */
+.answer {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 14px 16px;
+  margin: 8px 0;
+  border-radius: 8px;
+  font-size: 1rem;
+}
+button.answer { border: 1px solid var(--blue); }
+.answer.readonly {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.host-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
+.leave { margin: 28px 0 0; }

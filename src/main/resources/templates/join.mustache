@@ -1,0 +1,32 @@
+{{> header}}
+
+<h1>Join room {{code}}</h1>
+
+<p>Pick your name and {{required}} categories. On your turn you'll get an easy, then medium, then
+hard question from the categories you haven't cleared yet &mdash; one wrong answer ends your turn.
+First to clear all {{required}} wins.</p>
+
+{{#error}}
+  <p class="error">{{error}}</p>
+{{/error}}
+
+<form method="post" action="/j/{{code}}">
+  <p>
+    <label for="name">Your name:</label>
+    <input type="text" id="name" name="name" value="{{name}}" required>
+  </p>
+  <p>Choose exactly {{required}} categories:
+    <button type="button" onclick="pickRandomCategories(this.form, {{required}})">Pick {{required}} at random</button>
+  </p>
+  {{#categories}}
+    <label>
+      <input type="checkbox" name="categories" value="{{id}}">
+      {{name}}
+    </label><br/>
+  {{/categories}}
+  <p><button type="submit">Join game</button></p>
+</form>
+
+<script src="/js/pick-categories.js"></script>
+
+{{> footer}}

@@ -1,6 +1,7 @@
 package com.timeless.triviaquiz.service
 
 import com.timeless.triviaquiz.game.QuizQuestion
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.springframework.stereotype.Service
@@ -13,7 +14,20 @@ class TriviaQuestionService(private val webClient: WebClient) {
     companion object {
         /** How many questions to pull per opentdb call when refilling a buffer. */
         private const val QUESTION_BATCH = 5
+
+        /**
+         * Minimum gap between outbound opentdb calls. Their documented limit is one request per
+         * 5 seconds per IP, and exceeding it earns a 429 rather than a slow response. The hotseat
+         * game never came close — one browser, one question at a time — but a room full of phones
+         * polling, plus prefetching, will, so calls are queued through [rateLimited].
+         */
+        private const val MIN_CALL_GAP_MS = 5_500L
     }
+
+    // Serialises every outbound opentdb call and spaces them out. Coroutine-based, so waiting
+    // callers park rather than tying up threads.
+    private val apiMutex = Mutex()
+    private var nextCallAllowedAt = 0L
 
     // opentdb's category list is effectively static, so fetch it once and reuse it.
     @Volatile
@@ -54,18 +68,43 @@ class TriviaQuestionService(private val webClient: WebClient) {
         }
 
         // Buffer empty — refill. Fetch outside the lock so a slow call doesn't block other
-        // categories. opentdb returns nothing when it can't fill a batch (sparse combos), so
-        // fall back to a single question in that case.
-        var batch = startGame(QUESTION_BATCH, categoryId, difficulty)
-        if (batch.isEmpty()) {
-            batch = startGame(1, categoryId, difficulty)
-        }
+        // categories.
+        val batch = fetchBatch(categoryId, difficulty)
         if (batch.isEmpty()) return null
 
         return questionBuffersMutex.withLock {
             questionBuffers.getOrPut(key) { ArrayDeque() }.addAll(batch.drop(1))
             batch.first()
         }
+    }
+
+    /**
+     * Fills the buffer for a (category, difficulty) without consuming anything, so the opentdb
+     * call can happen ahead of time rather than while players wait. Does nothing if the buffer
+     * already has questions.
+     */
+    suspend fun prefetch(categoryId: Int, difficulty: String) {
+        val key = QuestionKey(categoryId, difficulty)
+
+        questionBuffersMutex.withLock {
+            if (!questionBuffers[key].isNullOrEmpty()) return
+        }
+
+        val batch = fetchBatch(categoryId, difficulty)
+        if (batch.isEmpty()) return
+
+        questionBuffersMutex.withLock {
+            questionBuffers.getOrPut(key) { ArrayDeque() }.addAll(batch)
+        }
+    }
+
+    /**
+     * Pulls a batch of questions for one (category, difficulty). opentdb returns nothing when it
+     * can't fill a whole batch (sparse combinations), so fall back to asking for a single question.
+     */
+    private suspend fun fetchBatch(categoryId: Int, difficulty: String): List<QuizQuestion> {
+        val batch = startGame(QUESTION_BATCH, categoryId, difficulty)
+        return batch.ifEmpty { startGame(1, categoryId, difficulty) }
     }
 
     /**
@@ -104,7 +143,7 @@ class TriviaQuestionService(private val webClient: WebClient) {
         amount: Int,
         difficulty: String? = null,
         categoryId: Int? = null
-    ): List<TriviaQuestion> {
+    ): List<TriviaQuestion> = rateLimited {
         val response = webClient.get()
             .uri { uriBuilder ->
                 uriBuilder
@@ -121,6 +160,21 @@ class TriviaQuestionService(private val webClient: WebClient) {
             .retrieve()
             .awaitBody<TriviaApiResponse>()
 
-        return response.results.map { it.decoded() }
+        response.results.map { it.decoded() }
+    }
+
+    /**
+     * Runs [call] with at least [MIN_CALL_GAP_MS] since the previous one. The gap is recorded even
+     * when the call fails, so an error (notably a 429) doesn't let the next caller straight through
+     * to earn another one.
+     */
+    private suspend fun <T> rateLimited(call: suspend () -> T): T = apiMutex.withLock {
+        val waitMs = nextCallAllowedAt - System.nanoTime() / 1_000_000
+        if (waitMs > 0) delay(waitMs)
+        try {
+            call()
+        } finally {
+            nextCallAllowedAt = System.nanoTime() / 1_000_000 + MIN_CALL_GAP_MS
+        }
     }
 }
