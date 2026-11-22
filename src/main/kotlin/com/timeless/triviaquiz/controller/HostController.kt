@@ -8,6 +8,7 @@ import com.timeless.triviaquiz.service.GameRoomService
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpSession
 import kotlinx.coroutines.sync.withLock
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Controller
 import org.springframework.ui.Model
 import org.springframework.ui.set
@@ -21,7 +22,10 @@ import org.springframework.web.bind.annotation.PostMapping
  * but no answer buttons.
  */
 @Controller
-class HostController(private val gameRoomService: GameRoomService) {
+class HostController(
+    private val gameRoomService: GameRoomService,
+    @Value("\${trivia.public-url:}") private val publicUrl: String
+) {
 
     /** Shows the host screen, creating a room the first time this browser asks for one. */
     @GetMapping("/host")
@@ -32,7 +36,7 @@ class HostController(private val gameRoomService: GameRoomService) {
 
         model["title"] = "Host a game"
         model["code"] = room.code
-        model["joinUrls"] = joinUrls(request, room.code)
+        model["joinUrls"] = joinUrls(request, room.code, publicUrl)
         model["minPlayers"] = GameRoomService.MIN_PLAYERS
         return "host"
     }

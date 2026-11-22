@@ -18,6 +18,7 @@ import jakarta.servlet.http.HttpSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Controller
 import org.springframework.ui.Model
@@ -46,7 +47,8 @@ data class DifficultySetting(val difficulty: String, val choices: List<RoundChoi
 @Controller
 class PartyHostController(
     private val gameRoomService: GameRoomService,
-    private val themeLoader: ThemeLoader
+    private val themeLoader: ThemeLoader,
+    @Value("\${trivia.public-url:}") private val publicUrl: String
 ) {
 
     @GetMapping("/party/host")
@@ -58,7 +60,7 @@ class PartyHostController(
 
         model["title"] = "Host a Theme Party"
         model["code"] = room.code
-        model["joinUrls"] = joinUrls(request, room.code)
+        model["joinUrls"] = joinUrls(request, room.code, publicUrl)
         model["inLobby"] = room.phase == RoomPhase.LOBBY
         model["bonusNeedsSecond"] = room.bonusNeedsSecond
         model["timeLimit"] = room.timeLimit
@@ -225,8 +227,10 @@ class PartyHostController(
 
     // Any phone on the LAN can open a host page of its own, so hosting a room isn't enough to be
     // allowed to change theme files. The second test covers the computer browsing to its own LAN address.
+    // The tunnel runs on this computer too, so internet requests are ruled out first: they'd look local.
     private fun isHostComputer(request: HttpServletRequest): Boolean =
-        InetAddress.getByName(request.remoteAddr).isLoopbackAddress || request.remoteAddr == request.localAddr
+        !isFromInternet(request) &&
+            (InetAddress.getByName(request.remoteAddr).isLoopbackAddress || request.remoteAddr == request.localAddr)
 
     // The mode check matters: after a close or a reap the code could be reissued to a classic room.
     private fun hostedRoom(session: HttpSession): GameRoom? =

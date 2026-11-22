@@ -14,7 +14,7 @@ each other player who is right. On someone else's turn, being right gets you 1 p
 <form method="post" action="/j/{{code}}">
   <p>
     <label for="name">Your name:</label>
-    <input type="text" id="name" name="name" value="{{name}}" required>
+    <input type="text" id="name" name="name" value="{{name}}" maxlength="{{maxNameLength}}" required>
   </p>
   <p><button type="submit">Join game</button></p>
 </form>

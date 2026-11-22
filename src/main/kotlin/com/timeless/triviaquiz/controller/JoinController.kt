@@ -74,16 +74,18 @@ class JoinController(
 
         val error = when {
             trimmedName.isBlank() -> "Please enter a name."
+            trimmedName.length > MAX_NAME_LENGTH -> "Please use a name of $MAX_NAME_LENGTH characters or fewer."
             !isParty && chosen.size != CATEGORIES_PER_PLAYER -> "Please choose exactly $CATEGORIES_PER_PLAYER categories."
             else -> null
         }
 
         if (error != null) {
+            val shownName = trimmedName.take(MAX_NAME_LENGTH)
             if (isParty) {
                 model["error"] = error
-                return renderPartyJoinForm(model, room.code, enteredName = trimmedName)
+                return renderPartyJoinForm(model, room.code, enteredName = shownName)
             }
-            renderJoinForm(model, room.code, enteredName = trimmedName)
+            renderJoinForm(model, room.code, enteredName = shownName)
             model["error"] = error
             return "join"
         }
@@ -163,6 +165,7 @@ class JoinController(
         model["categories"] = triviaQuestionService.getCategories()
         model["required"] = CATEGORIES_PER_PLAYER
         model["name"] = enteredName
+        model["maxNameLength"] = MAX_NAME_LENGTH
     }
 
     private fun renderPartyJoinForm(model: Model, code: String, enteredName: String, canJoin: Boolean = true): String {
@@ -170,6 +173,7 @@ class JoinController(
         model["canJoin"] = canJoin
         model["code"] = code
         model["name"] = enteredName
+        model["maxNameLength"] = MAX_NAME_LENGTH
         return "party-join"
     }
 
@@ -183,5 +187,10 @@ class JoinController(
         model["title"] = "Trivia"
         model["message"] = text
         return "mp-message"
+    }
+
+    companion object {
+        /** Keeps names fitting the roster, and stops anyone online pasting in an essay. */
+        const val MAX_NAME_LENGTH = 24
     }
 }

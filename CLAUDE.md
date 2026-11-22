@@ -41,6 +41,25 @@ Then open `/host` locally for the join address. Everyone must be on the same Wi-
 with client isolation block phone → laptop entirely — and macOS will prompt to allow incoming
 connections for the JVM the first time.
 
+**Hosting online** (friends not on your Wi-Fi), through a Cloudflare quick tunnel:
+
+```bash
+cloudflared tunnel --url http://localhost:8080      # prints https://<random>.trycloudflare.com
+./gradlew bootRun --args='--trivia.public-url=https://<random>.trycloudflare.com'
+```
+
+Open `/host` or `/party/host` on this computer; the public join link is listed first. Stop the
+tunnel when the game ends.
+
+**Online safety (`controller/OnlineAccess.kt`).** The tunnel runs on this computer, so internet
+requests arrive from localhost. `isFromInternet()` spots them by Cloudflare/proxy headers or a public
+client address (`server.forward-headers-strategy=native` makes Tomcat use the forwarded address).
+`OnlineAccessFilter` lets those requests reach only `/j/**`, `/play`, `/play/leave`, `/api/room/**`,
+`/css/**`, `/js/**`; everything else, including all host pages and theme admin, is 404.
+`isHostComputer()` also rejects them. Any new player-facing route must be added to the filter's
+allowlist; anything else is host-only by default. Player names are capped at
+`JoinController.MAX_NAME_LENGTH` (24).
+
 ## Architecture
 
 Spring Boot 3.5 / Kotlin app that renders a trivia quiz using server-side Mustache templates. Data is fetched from the [Open Trivia Database](https://opentdb.com) via a reactive `WebClient`.
@@ -121,6 +140,8 @@ Rooms are in memory only: restarting the server ends games in progress, and idle
 | `controller/PartyFlowIntegrationTest.kt` | `@SpringBootTest(webEnvironment=RANDOM_PORT)` | Theme Party over HTTP: answer, next, kick, used flags. Uses a temporary themes folder |
 | `service/ThemeLoaderTest.kt` | plain JUnit 5 | Theme files: valid, malformed, too small, added later, marking and resetting used |
 | `game/GameRoomTest.kt` | plain JUnit 5 | `GameRoom` phases, player-id ↔ seat mapping, reset (no Spring, no network) |
+| `controller/OnlineAccessIntegrationTest.kt` | `@SpringBootTest(webEnvironment=RANDOM_PORT)` | Tunnel traffic (proxy headers) reaches only player pages; host pages and theme admin are 404 |
+| `controller/JoinUrlsTest.kt` | plain JUnit 5 | The public join URL is listed first when `trivia.public-url` is set |
 | `controller/RoomLobbyIntegrationTest.kt` | `@SpringBootTest(webEnvironment=RANDOM_PORT)` | The networked join flow over real HTTP with several cookie jars standing in for devices: page rendering, per-device state, and that a device which isn't up can't answer. Stubs `TriviaQuestionService.getCategories()` and stops before starting a game, so it passes with the network unplugged |
 
 > `RoomLobbyIntegrationTest` replaces the injected `TriviaQuestionService` with a subclass via `@TestConfiguration` + `@Primary`. This works because `kotlin("plugin.spring")` opens `@Service` classes and their members.
