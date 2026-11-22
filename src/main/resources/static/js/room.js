@@ -110,15 +110,17 @@
       if (!party.themes.length) {
         content.appendChild(el('p', 'error', 'No themes available. Ask the host to add one.'));
       }
+      var grid = el('div', 'theme-grid');
       party.themes.forEach(function (theme) {
-        var button = el('button', 'answer', theme.name);
+        var button = el('button', 'theme-choice', theme.name);
         button.type = 'button';
         button.addEventListener('click', function () {
           send('pick', { version: latest.version, theme: theme.id });
         });
         updaters.push(function () { button.disabled = blocked('pick'); });
-        content.appendChild(button);
+        grid.appendChild(button);
       });
+      content.appendChild(grid);
     }
 
     function addQuestion(party, canAnswer) {
