@@ -28,7 +28,8 @@ data class ThemeCatalog(val themes: List<Theme>, val errors: List<ThemeError>)
 /**
  * Reads the themes folder afresh on every [load], so added or edited files appear without a restart.
  * A bad file is reported and skipped; it never stops the others loading. This is also the only
- * writer: it sets and clears each question's "used" flag, and moves removed themes aside.
+ * writer: it sets and clears each question's "used" flag, counts a theme's "flags" (marked as a bad
+ * theme by pickers), and moves removed themes aside.
  *
  * Error reasons give positions and field names but never values from the file: any device on the
  * LAN can open the host page that shows them, and the values include answers.
@@ -75,6 +76,18 @@ class ThemeLoader(@Value("\${trivia.themes-dir:themes}") themesDir: String) {
     }
 
     /**
+     * Adds one to a theme's "flags", the count of pickers who marked it as a bad theme.
+     * [themeId] must come from a loaded [Theme], never from a client. Returns false if the save failed.
+     */
+    fun flag(themeId: String): Boolean = synchronized(fileLock) {
+        if (Files.notExists(folder.resolve(themeId))) return false
+        rewriteRoot(themeId) { root ->
+            root.put("flags", root.path("flags").asInt(0).coerceAtLeast(0) + 1)
+            true
+        }
+    }
+
+    /**
      * Moves a theme file, valid or not, into [REMOVED_FOLDER], which [load] doesn't read. Moved
      * rather than deleted, as themes may exist nowhere else. [fileName] may come from a client: it is
      * only ever matched against the folder listing. Returns false if there was no such file or it
@@ -110,12 +123,16 @@ class ThemeLoader(@Value("\${trivia.themes-dir:themes}") themesDir: String) {
     }
 
     /** Applies [change] to a file's questions, saving only if it reports a change. */
-    private fun rewrite(themeId: String, change: (JsonNode) -> Boolean): Boolean {
+    private fun rewrite(themeId: String, change: (JsonNode) -> Boolean): Boolean =
+        rewriteRoot(themeId) { change(it.path("questions")) }
+
+    /** Applies [change] to a file's top-level object, saving only if it reports a change. */
+    private fun rewriteRoot(themeId: String, change: (ObjectNode) -> Boolean): Boolean {
         return try {
             val file = folder.resolve(themeId)
             val original = Files.readString(file)
-            val root = mapper.readTree(original)
-            if (!change(root.path("questions"))) return true
+            val root = mapper.readTree(original) as? ObjectNode ?: return false
+            if (!change(root)) return true
 
             var json = format(root)
             if (original.endsWith("\n")) json += "\n"
@@ -124,7 +141,7 @@ class ThemeLoader(@Value("\${trivia.themes-dir:themes}") themesDir: String) {
             true
         } catch (e: IOException) {
             // Not e.message: as in readCatalog, it may quote an answer.
-            logger.warn("Couldn't update used questions in {} ({})", themeId, e.javaClass.simpleName)
+            logger.warn("Couldn't update {} ({})", themeId, e.javaClass.simpleName)
             false
         }
     }
@@ -232,7 +249,12 @@ class ThemeLoader(@Value("\${trivia.themes-dir:themes}") themesDir: String) {
         }
         if (shortfalls.isNotEmpty()) invalid("Not enough questions: needs ${shortfalls.joinToString()}.")
 
-        return Theme(id = file.name, name = name, questions = questions)
+        val flags = root.path("flags")
+        if (!flags.isMissingNode && !(flags.isIntegralNumber && flags.asInt() >= 0)) {
+            invalid("\"flags\" must be a whole number, 0 or more.")
+        }
+
+        return Theme(id = file.name, name = name, questions = questions, flags = flags.asInt(0))
     }
 
     private fun parseQuestion(node: JsonNode, number: Int): ThemeQuestion {

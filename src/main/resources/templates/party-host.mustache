@@ -37,7 +37,7 @@
     </div>
     <label>
       <input type="checkbox" name="limitThemes" value="true"{{#limitThemes}} checked{{/limitThemes}}{{^inLobby}} disabled{{/inLobby}}>
-      Random themes: each turn the picker can only choose from {{themesOffered}}
+      Random themes: each turn the picker can only choose from {{themesOffered}}, or fewer when ahead: {{themesForLeader}} for first place, {{themesPerPlace}} more for each place below
     </label>
     <label>
       <input type="checkbox" name="bonusNeedsSecond" value="true"{{#bonusNeedsSecond}} checked{{/bonusNeedsSecond}}{{^inLobby}} disabled{{/inLobby}}>
@@ -57,10 +57,14 @@
     {{^themes}}
       <p>No themes yet. Add JSON files to the <code>themes/</code> folder, then refresh.</p>
     {{/themes}}
+    {{#anyFlagged}}
+      <p class="question-meta">Players flagged some themes as bad while picking. They're listed first: consider removing them.</p>
+    {{/anyFlagged}}
     <ul>
       {{#themes}}
-        <li>
+        <li{{#flagged}} class="theme-flagged"{{/flagged}}>
           {{name}} <small>({{used}} of {{total}} used)</small>
+          {{#flagged}}<span class="flag-count">&#x1F44E; flagged {{flags}} {{#flaggedOnce}}time{{/flaggedOnce}}{{^flaggedOnce}}times{{/flaggedOnce}}</span>{{/flagged}}
           {{#onHostComputer}}
             <button type="submit" class="secondary small" formaction="/party/host/remove-theme"
               name="theme" value="{{id}}" data-label="{{name}}"
@@ -102,9 +106,11 @@
 
 <p><a href="/">Back to home</a></p>
 
-<script src="/js/room.js?v=7"></script>
+<script src="/js/room.js?v=11"></script>
+<script src="/js/chat.js?v=2"></script>
 <script>
   startRoom({ code: '{{code}}', mount: document.getElementById('room'), host: true });
+  startChat({ code: '{{code}}' });
 </script>
 
 {{> footer}}

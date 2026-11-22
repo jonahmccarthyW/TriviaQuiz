@@ -8,7 +8,9 @@ import com.timeless.triviaquiz.game.RoomPhase
 import com.timeless.triviaquiz.game.TIME_CUT_FLOOR
 import com.timeless.triviaquiz.game.TIME_CUT_PER_ANSWER
 import com.timeless.triviaquiz.game.TIME_PER_PLAYER
+import com.timeless.triviaquiz.game.THEMES_FOR_LEADER
 import com.timeless.triviaquiz.game.THEMES_OFFERED
+import com.timeless.triviaquiz.game.THEMES_PER_PLACE
 import com.timeless.triviaquiz.game.THEME_QUESTION_SPLIT
 import com.timeless.triviaquiz.game.ThemePartyGame
 import com.timeless.triviaquiz.service.GameRoomService
@@ -27,9 +29,17 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestParam
 import java.net.InetAddress
+import java.time.Duration
 
-/** A theme as the host page lists it: no questions, as any device on the LAN can open that page. */
-data class ThemeSummary(val id: String, val name: String, val used: Int, val total: Int)
+/**
+ * A theme as the host page lists it: no questions, as any device on the LAN can open that page.
+ * [flags] is how many times pickers marked it as bad; [flagged] is for the template, as JMustache
+ * treats 0 as true.
+ */
+data class ThemeSummary(val id: String, val name: String, val used: Int, val total: Int, val flags: Int = 0) {
+    val flagged: Boolean get() = flags > 0
+    val flaggedOnce: Boolean get() = flags == 1
+}
 
 /** One option in a rounds dropdown. */
 data class RoundChoice(val count: Int, val selected: Boolean)
@@ -48,7 +58,11 @@ data class DifficultySetting(val difficulty: String, val choices: List<RoundChoi
 class PartyHostController(
     private val gameRoomService: GameRoomService,
     private val themeLoader: ThemeLoader,
-    @Value("\${trivia.public-url:}") private val publicUrl: String
+    @Value("\${trivia.public-url:}") private val publicUrl: String,
+    /** How long the theme name shows before each question. */
+    @Value("\${trivia.party.theme-flash-ms:1000}") private val themeFlashMs: Long,
+    /** How long the answer stays up before anyone can press Next. */
+    @Value("\${trivia.party.reveal-hold-ms:1500}") private val revealHoldMs: Long
 ) {
 
     @GetMapping("/party/host")
@@ -66,11 +80,17 @@ class PartyHostController(
         model["timeLimit"] = room.timeLimit
         model["limitThemes"] = room.limitThemes
         model["themesOffered"] = THEMES_OFFERED
+        model["themesForLeader"] = THEMES_FOR_LEADER
+        model["themesPerPlace"] = THEMES_PER_PLACE
         model["secondsPerPlayer"] = TIME_PER_PLAYER.seconds
         model["secondsPerAnswer"] = TIME_CUT_PER_ANSWER.seconds
         model["secondsFloor"] = TIME_CUT_FLOOR.seconds
         model["difficultySettings"] = difficultySettings(room.roundCounts)
-        model["themes"] = catalog.themes.map { ThemeSummary(it.id, it.name, it.usedCount, it.questions.size) }
+        // Most flagged first, so the ones to consider removing are at the top.
+        model["themes"] = catalog.themes
+            .map { ThemeSummary(it.id, it.name, it.usedCount, it.questions.size, it.flags) }
+            .sortedByDescending { it.flags }
+        model["anyFlagged"] = catalog.themes.any { it.flags > 0 }
         model["themeErrors"] = catalog.errors
         model["onHostComputer"] = isHostComputer(request)
         return "party-host"
@@ -177,7 +197,9 @@ class PartyHostController(
                     bonusNeedsSecond = bonusNeedsSecond,
                     timeLimit = timeLimit,
                     roundCounts = room.roundCounts,
-                    limitThemes = room.limitThemes
+                    limitThemes = room.limitThemes,
+                    themeFlash = Duration.ofMillis(themeFlashMs.coerceAtLeast(0)),
+                    revealHold = Duration.ofMillis(revealHoldMs.coerceAtLeast(0))
                 )
             }
             room.touch()

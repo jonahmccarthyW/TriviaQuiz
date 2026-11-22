@@ -3,6 +3,16 @@ package com.timeless.triviaquiz.game
 /** What anyone but the picker earns for being right. */
 const val GUESSER_POINTS = 1
 
+/** Extra for whoever answered correctly first, picker included, on top of their other points. */
+const val FIRST_CORRECT_POINTS = 1
+
+/**
+ * Kept small on purpose: every [STREAK_LENGTH]th correct answer in a row (3rd, 6th, ...) earns
+ * [STREAK_POINTS], so a run is rewarded without running away with the game.
+ */
+const val STREAK_LENGTH = 3
+const val STREAK_POINTS = 1
+
 /** What each other player's correct answer costs the picker. */
 const val PENALTY_PER_OTHER_CORRECT = 1
 

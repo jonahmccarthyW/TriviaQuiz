@@ -50,6 +50,29 @@ class ThemeLoaderTest {
     }
 
     @Test
+    fun `flagging a theme counts up and is saved in its file`(@TempDir dir: Path) {
+        dir.resolve("end.json").writeText(themeJson())
+        val loader = ThemeLoader(dir.toString())
+        assertEquals(0, loader.load().themes.single().flags)
+
+        assertTrue(loader.flag("end.json"))
+        assertTrue(loader.flag("end.json"))
+
+        assertEquals(2, loader.load().themes.single().flags)
+        assertEquals(2, ObjectMapper().readTree(dir.resolve("end.json").readText()).path("flags").asInt())
+        assertFalse(loader.flag("missing.json"))
+    }
+
+    @Test
+    fun `a flags value that isn't a whole number is reported`(@TempDir dir: Path) {
+        dir.resolve("end.json").writeText(themeJson().replaceFirst("{", "{\"flags\": \"lots\","))
+
+        val error = load(dir).errors.single()
+
+        assertTrue("\"flags\"" in error.reason, error.reason)
+    }
+
+    @Test
     fun `a malformed file is skipped with a clear error and the others still load`(@TempDir dir: Path) {
         dir.resolve("broken.json").writeText("{ \"theme\": \"Broken\",\n  \"questions\": [ SecretAnswer ] }")
         dir.resolve("end.json").writeText(themeJson())

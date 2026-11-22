@@ -18,7 +18,7 @@
   var CLOCK_TICK_MS = 100;
   var URGENT_MS = 3000;
   var SETTLE_MS = 600;
-  var FEW_THEMES = 6; // Few enough for big buttons.
+  var FEW_THEMES = 8; // Few enough for big buttons. Matches THEMES_OFFERED, so a normal deal gets them.
   var ROW_PX = 30; // Must match .score-row's height.
   var RESULT_STAGGER_MS = 120;
   var MIN_SCALE = 10; // So the first few points don't fill the whole track.
@@ -46,6 +46,9 @@
     var turnKey = null;
     var settlingUntil = 0;
     var wasYourPick = false;
+    var flagMode = false; // While on, tapping a theme flags it as bad instead of picking it.
+    var nextAt = 0; // When Next becomes tappable after a reveal.
+    var nextTimer = null;
     var updaters = [];
     var pending = {};
     var scoreboard = createScoreboard(isHost ? kick : null);
@@ -104,24 +107,60 @@
       if (party.stage === 'picking') {
         return party.yourPick ? 'Your turn to pick a theme' : party.picker + ' is picking a theme...';
       }
+      if (party.stage === 'answering' && !party.question) { return 'Get ready...'; }
       return party.theme;
+    }
+
+    function ordinal(n) {
+      var tens = n % 100;
+      if (tens >= 11 && tens <= 13) { return n + 'th'; }
+      return n + ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
     }
 
     function addThemes(party) {
       if (!party.themes.length) {
         content.appendChild(el('p', 'error', 'No themes available. Ask the host to add one.'));
       }
+      // Being ahead means fewer themes to choose from; say why, so it doesn't look like a bug.
+      if (party.pickerPlace && party.themes.length) {
+        content.appendChild(el('p', 'place-note', "You're " + ordinal(party.pickerPlace) +
+          ', so you pick from ' + party.themes.length + (party.themes.length === 1 ? ' theme.' : ' themes.')));
+      }
       var grid = el('div', 'theme-grid' + (party.themes.length <= FEW_THEMES ? ' few' : ''));
       party.themes.forEach(function (theme) {
-        var button = el('button', 'theme-choice', theme.name);
+        var button = el('button', 'theme-choice' + (theme.flagged ? ' flagged' : ''), theme.name);
         button.type = 'button';
+        if (theme.flagged) { button.title = 'You flagged this as a bad theme'; }
         button.addEventListener('click', function () {
+          if (flagMode) {
+            flagMode = false;
+            update();
+            send('flag', { theme: theme.id });
+            return;
+          }
           send('pick', { version: latest.version, theme: theme.id });
         });
-        updaters.push(function () { button.disabled = blocked('pick'); });
+        updaters.push(function () {
+          // In flag mode a theme already flagged by you can't be flagged again.
+          button.disabled = blocked('pick') || blocked('flag') || (flagMode && theme.flagged);
+        });
         grid.appendChild(button);
       });
+      updaters.push(function () { grid.classList.toggle('flagging', flagMode); });
       content.appendChild(grid);
+
+      if (!party.themes.length) { return; }
+      var flagToggle = el('button', 'flag-toggle');
+      flagToggle.type = 'button';
+      flagToggle.addEventListener('click', function () {
+        flagMode = !flagMode;
+        update();
+      });
+      updaters.push(function () {
+        flagToggle.textContent = flagMode ? 'Cancel: tap a theme to flag it as bad' : '👎 Flag a bad theme';
+        flagToggle.classList.toggle('active', flagMode);
+      });
+      content.appendChild(flagToggle);
     }
 
     function addQuestion(party, canAnswer) {
@@ -159,10 +198,13 @@
       content.appendChild(waiting);
     }
 
-    // What this question did to a player's score, as a suffix. Blank for a guesser who was wrong.
+    // What this question did to a player's score, as a suffix, including the first-correct point.
+    // Blank for a guesser who was wrong.
     function scoreChange(party, player) {
-      if (player.picker) { return ' ' + points(party.reveal.points); }
-      return player.correct ? ' ' + points(party.reveal.guesserPoints) : '';
+      var extra = (player.first ? party.reveal.firstCorrectPoints : 0) +
+        (player.streakBonus ? party.reveal.streakPoints : 0);
+      if (player.picker) { return ' ' + points(party.reveal.points + extra); }
+      return player.correct ? ' ' + points(party.reveal.guesserPoints + extra) : '';
     }
 
     // Symbol and word as well as color, for anyone who can't tell red from green.
@@ -170,7 +212,8 @@
       var you = party.players.filter(function (player) { return player.you; })[0];
       if (you) {
         content.appendChild(el('div', 'result-banner ' + (you.correct ? 'right' : 'wrong'),
-          (you.correct ? '\u2713 YOU GOT IT RIGHT'
+          (you.first ? '\u26a1 FIRST TO GET IT RIGHT'
+            : you.correct ? '\u2713 YOU GOT IT RIGHT'
             : (you.answered ? '\u2717 YOU GOT IT WRONG' : '\u2717 OUT OF TIME')) + scoreChange(party, you)));
       }
 
@@ -179,8 +222,10 @@
         return Number(b.picker) - Number(a.picker); // The picker first, then join order.
       });
       ordered.forEach(function (player, index) {
-        var tile = el('div', 'result-tile ' + (player.correct ? 'right' : 'wrong'));
+        var tile = el('div', 'result-tile ' + (player.correct ? 'right' : 'wrong') + (player.first ? ' first' : ''));
         tile.style.animationDelay = index * RESULT_STAGGER_MS + 'ms';
+        if (player.first) { tile.appendChild(el('span', 'result-first', '\u26a1 FIRST')); }
+        if (player.streakBonus) { tile.appendChild(el('span', 'result-streak', '\ud83d\udd25 ' + player.streak + ' IN A ROW')); }
         tile.appendChild(el('span', 'result-mark', player.correct ? '\u2713' : '\u2717'));
         tile.appendChild(el('span', 'result-name', player.name + (player.you ? ' (you)' : '')));
         tile.appendChild(el('span', 'result-word', (player.correct ? 'RIGHT' : (player.answered ? 'WRONG' : 'NO ANSWER')) +
@@ -216,6 +261,14 @@
       }
       card.appendChild(el('p', 'turn-total',
         party.picker + ': ' + points(item.points) + ' (' + parts.join(', ') + ')'));
+      if (item.firstCorrect) {
+        card.appendChild(el('p', 'first-correct',
+          '⚡ ' + item.firstCorrect + ' was first to get it right: ' + points(item.firstCorrectPoints) + ' extra'));
+      }
+      party.players.filter(function (player) { return player.streakBonus; }).forEach(function (player) {
+        card.appendChild(el('p', 'streak-bonus', '🔥 ' + player.name + ' has ' + player.streak +
+          ' in a row: ' + points(item.streakPoints) + ' extra'));
+      });
       content.appendChild(card);
 
       if (!canAnswer) { return; }
@@ -223,12 +276,14 @@
         party.nextPicker === null ? 'See final scores' : 'Next: ' + party.nextPicker + "'s turn");
       // Left without type="button", which the stylesheet draws as secondary. It isn't in a form.
       next.addEventListener('click', function () { send('next', { version: latest.version }); });
-      updaters.push(function () { next.disabled = blocked('next'); });
+      // Held for a moment after the reveal, so the answer can't be skipped before it's read.
+      updaters.push(function () { next.disabled = blocked('next') || Date.now() < nextAt; });
       content.appendChild(next);
     }
 
     function build(party, canAnswer) {
       updaters = [];
+      if (!party.themes) { flagMode = false; } // A new screen never starts in flag mode.
       content.textContent = '';
       content.appendChild(el('h2', 'room-status', headline(party)));
 
@@ -239,6 +294,15 @@
           (party.bonusNeedsSecond ? '. Bonus needs a second correct answer.' : '.')));
       }
       if (latest.notice) { content.appendChild(el('p', 'error', latest.notice)); }
+
+      // The theme flash: the server holds the question back for a moment after the pick.
+      if (party.stage === 'answering' && !party.question) {
+        var flash = el('div', 'theme-flash');
+        flash.appendChild(el('span', 'theme-flash-label', party.yourPick ? 'You picked' : party.picker + ' picked'));
+        flash.appendChild(el('strong', 'theme-flash-name', party.theme));
+        content.appendChild(flash);
+        return;
+      }
 
       if (party.themes) { addThemes(party); }
       if (party.question) { addQuestion(party, canAnswer); }
@@ -277,6 +341,14 @@
 
       scoreboard.update(party);
       clock.update(party, nextTurnKey);
+
+      if (party.millisUntilNext) {
+        nextAt = Date.now() + party.millisUntilNext;
+        clearTimeout(nextTimer);
+        nextTimer = setTimeout(update, party.millisUntilNext + 20);
+      } else {
+        nextAt = 0;
+      }
 
       if (nextScreenKey !== screenKey) {
         if (turnKey !== null && nextTurnKey !== turnKey) {
@@ -330,7 +402,8 @@
     }
 
     function update(party, turnKey) {
-      if (party.stage !== 'answering' || party.millisLeft === null) {
+      // No clock during the theme flash: it starts when the question shows.
+      if (party.stage !== 'answering' || party.millisLeft === null || !party.question) {
         clearInterval(ticker);
         ticker = null;
         key = null;
@@ -414,7 +487,8 @@
         row.node.title = player.name + ': ' + player.score + ' points';
         row.name.textContent = (player.picker ? '▶ ' : '') +
           (party.stage === 'answering' && player.answered ? '✓ ' : '') +
-          player.name + (player.you ? ' (you)' : '');
+          player.name + (player.you ? ' (you)' : '') +
+          (player.streak >= 2 ? ' 🔥' + player.streak : '');
         row.value.textContent = player.score;
         row.result.textContent = player.correct === null ? '' : (player.correct ? '\u2713' : '\u2717');
         row.node.classList.toggle('right', player.correct === true);
@@ -439,6 +513,7 @@
     var timer = null;
     var partyBoard = null;
     var pollMs = POLL_MS;
+    var questionIn = null; // During a theme flash, when to poll for the question.
 
     function stop(message) {
       stopped = true;
@@ -449,7 +524,8 @@
 
     function schedule() {
       if (stopped) { return; }
-      timer = setTimeout(poll, pollMs);
+      // Just after the flash ends, so the question shows on every screen at about the same time.
+      timer = setTimeout(poll, questionIn === null ? pollMs : Math.min(pollMs, questionIn + 40));
     }
 
     function poll() {
@@ -564,7 +640,10 @@
     function render(state) {
       if (state.party) {
         // Through the whole timed game, so a new question doesn't reach some phones a second late.
-        pollMs = state.party.timeLimit && state.phase === 'playing' ? TIMED_POLL_MS : POLL_MS;
+        // Also while someone is picking, so everyone catches the theme flash that follows.
+        var picking = state.party.stage === 'picking';
+        pollMs = (state.party.timeLimit && state.phase === 'playing') || picking ? TIMED_POLL_MS : POLL_MS;
+        questionIn = state.party.millisUntilQuestion;
         partyBoard = partyBoard || createPartyBoard(code, mount, !!options.host);
         partyBoard.render(state);
         return;

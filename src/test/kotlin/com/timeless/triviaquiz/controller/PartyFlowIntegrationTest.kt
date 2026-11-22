@@ -2,6 +2,7 @@ package com.timeless.triviaquiz.controller
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.timeless.triviaquiz.game.THEMES_OFFERED
 import kotlinx.coroutines.runBlocking
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -56,6 +57,10 @@ class PartyFlowIntegrationTest {
         @DynamicPropertySource
         fun themes(registry: DynamicPropertyRegistry) {
             registry.add("trivia.themes-dir") { themesDir.toString() }
+            // No theme flash, so answers can follow the pick straight away. PartyViewsTest covers it.
+            registry.add("trivia.party.theme-flash-ms") { "0" }
+            // Likewise Next can follow a reveal straight away. ThemePartyGameTest covers the hold.
+            registry.add("trivia.party.reveal-hold-ms") { "0" }
         }
     }
 
@@ -143,7 +148,10 @@ class PartyFlowIntegrationTest {
 
         assertTrue(isMarkedUsed(question))
         assertEquals("right", room.party(bob).path("reveal").path("correctAnswer").asText())
-        assertEquals(2, room.party().path("players")[0].path("score").asInt())
+        assertEquals(2 + 1, room.party().path("players")[0].path("score").asInt(), "Ann was first")
+        val reveal = room.party(bob).path("reveal")
+        assertEquals("P0", reveal.path("firstCorrect").asText())
+        assertTrue(room.party(bob).path("players")[0].path("first").asBoolean())
     }
 
     @Test
@@ -194,8 +202,10 @@ class PartyFlowIntegrationTest {
         }
 
         assertEquals("finished", room.party().path("stage").asText())
-        // Both right every time: six picks of two less one, and six guesses of one.
-        assertEquals(listOf(12, 12), room.party().path("players").map { it.path("score").asInt() })
+        // Both right every time: six picks of two less one, and six guesses of one. P0 always
+        // answers first, so also gets the first-correct point all twelve turns. And twelve in a
+        // row is four streak points each.
+        assertEquals(listOf(12 + 12 + 4, 12 + 4), room.party().path("players").map { it.path("score").asInt() })
     }
 
     @Test
@@ -229,8 +239,31 @@ class PartyFlowIntegrationTest {
     }
 
     @Test
+    fun `the picker can flag a theme once, and only the host page shows the count`() {
+        val file = themesDir.resolve("test.json")
+        val original = file.readText()
+        try {
+            val room = Party(2)
+            val (ann, bob) = room.players
+
+            assertEquals(409, bob.act(room.code, "flag", mapOf("theme" to "test.json")), "only the picker")
+            assertEquals(200, ann.act(room.code, "flag", mapOf("theme" to "test.json")))
+            assertEquals(409, ann.act(room.code, "flag", mapOf("theme" to "test.json")), "once each")
+            assertEquals(409, ann.act(room.code, "flag", mapOf("theme" to "../test.json")))
+
+            assertEquals(1, mapper.readTree(file.readText()).path("flags").asInt())
+            assertTrue(room.party(ann).path("themes")[0].path("flagged").asBoolean())
+            assertFalse("flags" in room.party(bob).toString(), "players never see the count")
+            assertTrue("flagged 1 time" in room.host.get("/party/host").body())
+            assertEquals(200, room.pick(ann), "a flagged theme can still be picked")
+        } finally {
+            file.writeText(original)
+        }
+    }
+
+    @Test
     fun `the theme limit is on by default and enforced by the server`() {
-        val ids = (1..8).map { "limit$it.json" }
+        val ids = (1..THEMES_OFFERED + 2).map { "limit$it.json" } // More than are offered.
         ids.forEach { themesDir.resolve(it).writeText(themesDir.resolve("test.json").readText()) }
         try {
             val room = Party(2, start = false)
@@ -239,7 +272,7 @@ class PartyFlowIntegrationTest {
             val picker = room.players[0]
 
             val offered = room.party(picker).path("themes").map { it.path("id").asText() }
-            assertEquals(6, offered.size)
+            assertEquals(THEMES_OFFERED, offered.size)
             assertEquals(offered, room.party(picker).path("themes").map { it.path("id").asText() })
             assertTrue(room.party(room.players[1]).path("themes").isNull, "only the picker sees them")
 

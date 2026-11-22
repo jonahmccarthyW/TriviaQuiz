@@ -51,6 +51,9 @@ class GameRoom(val code: String, val mode: RoomMode = RoomMode.CLASSIC) {
 
     val mutex = Mutex()
 
+    /** Has its own lock and doesn't touch [version]; see [RoomChat]. Survives "Play again". */
+    val chat = RoomChat()
+
     /**
      * Devices that have joined. Ordered; the game's player order follows it. Copy-on-write because
      * the "have you joined already?" check reads it outside [mutex] on every page load.
@@ -86,6 +89,16 @@ class GameRoom(val code: String, val mode: RoomMode = RoomMode.CLASSIC) {
 
     // Concurrent because, like [lobby], the join page reads it outside [mutex].
     private val kickedIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    // "playerId|themeId" for each bad-theme flag given in this room, so a player can flag a theme
+    // only once however many times it's offered to them.
+    private val themeFlags: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** Records a player's bad-theme flag. False if they had already flagged it. */
+    fun flagTheme(playerId: String, themeId: String): Boolean = themeFlags.add("$playerId|$themeId")
+
+    fun hasFlagged(playerId: String?, themeId: String): Boolean =
+        playerId != null && "$playerId|$themeId" in themeFlags
 
     var feedback: RoomFeedback? = null
 

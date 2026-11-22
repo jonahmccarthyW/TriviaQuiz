@@ -8,8 +8,12 @@ val THEME_QUESTION_SPLIT: Map<String, Int> = linkedMapOf("easy" to 2, "medium" t
 
 const val DEFAULT_ROUNDS = 6
 
-/** With the theme limit on, how many themes a picker is offered. */
-const val THEMES_OFFERED = 6
+/** With the theme limit on, the most themes a picker is offered: what everyone gets when level. */
+const val THEMES_OFFERED = 8
+
+/** How many the leader gets. Each place further down gets [THEMES_PER_PLACE] more, up to [THEMES_OFFERED]. */
+const val THEMES_FOR_LEADER = 4
+const val THEMES_PER_PLACE = 2
 
 /** How many rounds of each difficulty a game has unless the host changes it. None are easy. */
 val DEFAULT_ROUND_COUNTS: Map<String, Int> = run {
@@ -46,8 +50,11 @@ data class PartyQuestion(
     val explanation: String
 )
 
-/** A valid theme file. [id] is its file name, as two files may share a [name]. */
-data class Theme(val id: String, val name: String, val questions: List<ThemeQuestion>) {
+/**
+ * A valid theme file. [id] is its file name, as two files may share a [name]. [flags] is how many
+ * times pickers have marked it as a bad theme, which only the host sees.
+ */
+data class Theme(val id: String, val name: String, val questions: List<ThemeQuestion>, val flags: Int = 0) {
 
     val usedCount: Int
         get() = questions.count { it.used }

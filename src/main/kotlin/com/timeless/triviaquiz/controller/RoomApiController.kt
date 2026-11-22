@@ -84,6 +84,8 @@ data class PartyAnswerRequest(val version: Long, val answer: String)
 
 data class PartyNextRequest(val version: Long)
 
+data class PartyFlagRequest(val theme: String)
+
 /**
  * The polling API every device in a room talks to. One endpoint to read the room and one to answer
  * (Theme Party rooms have their own pick, answer and next endpoints); all return the same tailored view so
@@ -219,6 +221,33 @@ class RoomApiController(
             if (moved) room.touch()
             moved
         }
+        return partyResponse(room, viewerId, accepted)
+    }
+
+    /**
+     * Marks a theme as bad, adding to the count the host sees. Only the picker, only for a theme on
+     * offer to them, and once per player per theme. Doesn't bump the version: nothing anyone else
+     * sees changes, and the picker's exact-match pick mustn't be made stale by it.
+     */
+    @PostMapping("/api/room/{code}/party/flag")
+    suspend fun flagTheme(
+        @PathVariable code: String,
+        @RequestBody body: PartyFlagRequest,
+        session: HttpSession
+    ): ResponseEntity<RoomStateView> {
+        val room = gameRoomService.find(code) ?: return ResponseEntity.notFound().build()
+        val viewerId = viewerId(session, room)
+        // Matched against the folder listing, so the client's value is never used as a path.
+        val themes = loadThemes()
+        val theme = themes.firstOrNull { it.id == body.theme }
+
+        val accepted = room.mutex.withLock {
+            val game = room.party
+            game != null && theme != null && viewerId != null && game.canPick(viewerId) &&
+                game.themeChoices(themes).any { it.id == theme.id } &&
+                room.flagTheme(viewerId, theme.id)
+        }
+        if (accepted) withContext(Dispatchers.IO) { themeLoader.flag(theme!!.id) }
         return partyResponse(room, viewerId, accepted)
     }
 

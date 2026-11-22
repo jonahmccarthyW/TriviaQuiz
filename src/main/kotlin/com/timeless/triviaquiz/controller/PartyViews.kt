@@ -1,9 +1,12 @@
 package com.timeless.triviaquiz.controller
 
+import com.timeless.triviaquiz.game.FIRST_CORRECT_POINTS
 import com.timeless.triviaquiz.game.GUESSER_POINTS
 import com.timeless.triviaquiz.game.GameRoom
 import com.timeless.triviaquiz.game.PartyStage
 import com.timeless.triviaquiz.game.PartyTurn
+import com.timeless.triviaquiz.game.STREAK_LENGTH
+import com.timeless.triviaquiz.game.STREAK_POINTS
 import com.timeless.triviaquiz.game.Theme
 import java.time.Duration
 import java.time.Instant
@@ -22,10 +25,17 @@ data class PartyPlayerView(
     val picker: Boolean,
     val you: Boolean,
     val answered: Boolean,
-    val correct: Boolean?
+    val correct: Boolean?,
+    /** True only during the reveal, for whoever answered correctly first. */
+    val first: Boolean = false,
+    /** Correct answers in a row so far. */
+    val streak: Int = 0,
+    /** True only during the reveal, for those whose streak just earned its point. */
+    val streakBonus: Boolean = false
 )
 
-data class ThemeChoiceView(val id: String, val name: String)
+/** [flagged] is whether this viewer has marked it as a bad theme. The count is only on the host page. */
+data class ThemeChoiceView(val id: String, val name: String, val flagged: Boolean = false)
 
 /**
  * A Theme Party question while it is still being answered. As with [QuestionView], it exists to
@@ -51,7 +61,12 @@ data class PartyRevealView(
     val bonus: Int,
     val penalty: Int,
     val points: Int,
-    val guesserPoints: Int
+    val guesserPoints: Int,
+    /** The name of whoever answered correctly first, or null if nobody was right. */
+    val firstCorrect: String?,
+    val firstCorrectPoints: Int,
+    val streakPoints: Int,
+    val streakLength: Int
 )
 
 /** The Theme Party part of [RoomStateView], tailored to who is asking. */
@@ -70,6 +85,18 @@ data class PartyView(
     /** Time left rather than a deadline, as phones' clocks can't be trusted to match the laptop's. */
     val millisLeft: Long?,
     val millisAllowed: Long?,
+    /**
+     * During the theme flash, how long until the question is shown; [question] is null until
+     * then, so no device can see it early. Null otherwise.
+     */
+    val millisUntilQuestion: Long?,
+    /** During the reveal, how long until Next can be pressed. Null once it can. */
+    val millisUntilNext: Long?,
+    /**
+     * The picker's place while picking, 1 for the lead; null while everyone is level. A higher
+     * place gets fewer themes ([themes] has as many as they get).
+     */
+    val pickerPlace: Int?,
     val theme: String?,
     val themes: List<ThemeChoiceView>?,
     val question: PartyQuestionView?,
@@ -105,6 +132,9 @@ internal fun buildPartyView(room: GameRoom, viewerId: String?, themes: List<Them
             timeLimit = null,
             millisLeft = null,
             millisAllowed = null,
+            millisUntilQuestion = null,
+            millisUntilNext = null,
+            pickerPlace = null,
             theme = null,
             themes = null,
             question = null,
@@ -113,6 +143,11 @@ internal fun buildPartyView(room: GameRoom, viewerId: String?, themes: List<Them
         )
 
     val picker = if (game.isOver) null else game.picker
+    val revealed = game.turn?.takeIf { game.stage == PartyStage.REVEAL }
+    val firstId = revealed?.firstCorrectId
+    val firstName = game.players.firstOrNull { it.playerId == firstId }?.name
+    val asking = game.turn?.takeIf { game.stage == PartyStage.ANSWERING }
+    val flashing = asking != null && !asking.isOpen(now)
 
     return PartyView(
         stage = game.stage.name.lowercase(),
@@ -125,7 +160,10 @@ internal fun buildPartyView(room: GameRoom, viewerId: String?, themes: List<Them
                 picker = it.playerId == picker?.playerId,
                 you = it.playerId == viewerId,
                 answered = game.hasAnswered(it.playerId),
-                correct = if (game.stage == PartyStage.REVEAL) game.turn?.isCorrect(it.playerId) else null
+                correct = if (game.stage == PartyStage.REVEAL) game.turn?.isCorrect(it.playerId) else null,
+                first = it.playerId == firstId,
+                streak = game.streakOf(it.playerId),
+                streakBonus = revealed?.streakBonusIds?.contains(it.playerId) == true
             )
         },
         round = game.roundIndex + 1,
@@ -138,10 +176,17 @@ internal fun buildPartyView(room: GameRoom, viewerId: String?, themes: List<Them
         timeLimit = game.timeLimit,
         millisLeft = game.turn?.deadline?.let { Duration.between(now, it).toMillis().coerceAtLeast(0) },
         millisAllowed = game.turn?.timeAllowed?.toMillis(),
+        millisUntilQuestion = if (flashing) Duration.between(now, asking!!.opensAt).toMillis().coerceAtLeast(0) else null,
+        millisUntilNext = game.nextAllowedAt()?.let { Duration.between(now, it).toMillis() }?.takeIf { it > 0 },
+        pickerPlace = if (game.stage == PartyStage.PICKING && game.limitThemes) game.pickerPlace() else null,
         theme = game.turn?.themeName,
-        themes = if (game.canPick(viewerId)) game.themeChoices(themes).map { ThemeChoiceView(it.id, it.name) } else null,
-        question = game.turn?.takeIf { game.stage == PartyStage.ANSWERING }?.questionView(viewerId),
-        reveal = game.turn?.takeIf { game.stage == PartyStage.REVEAL }?.revealView(viewerId),
+        themes = if (game.canPick(viewerId)) {
+            game.themeChoices(themes).map { ThemeChoiceView(it.id, it.name, room.hasFlagged(viewerId, it.id)) }
+        } else {
+            null
+        },
+        question = asking?.takeIf { !flashing }?.questionView(viewerId),
+        reveal = revealed?.revealView(viewerId, firstName),
         winners = game.winners().map { it.name }
     )
 }
@@ -152,7 +197,7 @@ private fun PartyTurn.questionView(viewerId: String?) = PartyQuestionView(
     yourAnswer = answerBy(viewerId)
 )
 
-private fun PartyTurn.revealView(viewerId: String?): PartyRevealView? = score?.let {
+private fun PartyTurn.revealView(viewerId: String?, firstName: String?): PartyRevealView? = score?.let {
     PartyRevealView(
         question = question.question,
         correctAnswer = question.correctAnswer,
@@ -163,6 +208,10 @@ private fun PartyTurn.revealView(viewerId: String?): PartyRevealView? = score?.l
         bonus = it.bonus,
         penalty = it.penalty,
         points = it.total,
-        guesserPoints = GUESSER_POINTS
+        guesserPoints = GUESSER_POINTS,
+        firstCorrect = firstName,
+        firstCorrectPoints = FIRST_CORRECT_POINTS,
+        streakPoints = STREAK_POINTS,
+        streakLength = STREAK_LENGTH
     )
 }
