@@ -15,13 +15,21 @@
 
 <div id="room"></div>
 
-{{! One form on purpose: refresh, reset used and start all send the checkboxes. autocomplete="off" stops the
+{{! One form on purpose: refresh, reset used and start all send the settings. autocomplete="off" stops the
     browser restoring a checkbox state the server doesn't have. }}
 <form method="post" action="/party/host/start" autocomplete="off">
   {{! Enter presses a form's first submit button, so that mustn't be a Remove. }}
   <button type="submit" formaction="/party/host/refresh" style="display: none"></button>
   <fieldset>
     <legend>Game settings</legend>
+    <label>
+      Rounds (one turn each per round)
+      <select name="rounds" class="rounds"{{^inLobby}} disabled{{/inLobby}}>
+        {{#roundChoices}}
+          <option value="{{count}}"{{#selected}} selected{{/selected}}>{{label}}</option>
+        {{/roundChoices}}
+      </select>
+    </label>
     <label>
       <input type="checkbox" name="bonusNeedsSecond" value="true"{{#bonusNeedsSecond}} checked{{/bonusNeedsSecond}}{{^inLobby}} disabled{{/inLobby}}>
       Bonus needs a second correct answer
@@ -62,7 +70,6 @@
         {{/onHostComputer}}
       </p>
     {{/themeErrors}}
-    <p class="question-meta">{{rounds}} rounds. Each player picks a theme for one question per round.</p>
     <button type="submit" class="secondary" formaction="/party/host/refresh">Refresh themes</button>
     {{#onHostComputer}}
       <button type="submit" class="secondary" formaction="/party/host/reset-used"
@@ -86,7 +93,7 @@
 
 <p><a href="/">Back to home</a></p>
 
-<script src="/js/room.js?v=5"></script>
+<script src="/js/room.js?v=6"></script>
 <script>
   startRoom({ code: '{{code}}', mount: document.getElementById('room'), host: true });
 </script>

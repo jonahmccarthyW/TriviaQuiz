@@ -158,13 +158,19 @@
       content.appendChild(waiting);
     }
 
+    // What this question did to a player's score, as a suffix. Blank for a guesser who was wrong.
+    function scoreChange(party, player) {
+      if (player.picker) { return ' ' + points(party.reveal.points); }
+      return player.correct ? ' ' + points(party.reveal.guesserPoints) : '';
+    }
+
     // Symbol and word as well as color, for anyone who can't tell red from green.
     function addResults(party) {
       var you = party.players.filter(function (player) { return player.you; })[0];
       if (you) {
         content.appendChild(el('div', 'result-banner ' + (you.correct ? 'right' : 'wrong'),
-          you.correct ? '\u2713 YOU GOT IT RIGHT'
-            : (you.answered ? '\u2717 YOU GOT IT WRONG' : '\u2717 OUT OF TIME')));
+          (you.correct ? '\u2713 YOU GOT IT RIGHT'
+            : (you.answered ? '\u2717 YOU GOT IT WRONG' : '\u2717 OUT OF TIME')) + scoreChange(party, you)));
       }
 
       var grid = el('div', 'results' + (isHost ? ' on-host' : ''));
@@ -177,7 +183,7 @@
         tile.appendChild(el('span', 'result-mark', player.correct ? '\u2713' : '\u2717'));
         tile.appendChild(el('span', 'result-name', player.name + (player.you ? ' (you)' : '')));
         tile.appendChild(el('span', 'result-word', (player.correct ? 'RIGHT' : (player.answered ? 'WRONG' : 'NO ANSWER')) +
-          (player.picker ? ' ' + points(party.reveal.points) : '')));
+          scoreChange(party, player)));
         grid.appendChild(tile);
       });
       content.appendChild(grid);

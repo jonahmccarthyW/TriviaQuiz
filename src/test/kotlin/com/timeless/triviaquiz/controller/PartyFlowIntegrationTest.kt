@@ -143,7 +143,7 @@ class PartyFlowIntegrationTest {
 
         assertTrue(isMarkedUsed(question))
         assertEquals("right", room.party(bob).path("reveal").path("correctAnswer").asText())
-        assertEquals(5, room.party().path("players")[0].path("score").asInt())
+        assertEquals(2, room.party().path("players")[0].path("score").asInt())
     }
 
     @Test
@@ -194,8 +194,32 @@ class PartyFlowIntegrationTest {
         }
 
         assertEquals("finished", room.party().path("stage").asText())
-        // Both right every time: six turns of five, less one.
-        assertEquals(listOf(24, 24), room.party().path("players").map { it.path("score").asInt() })
+        // Both right every time: six picks of two less one, and six guesses of one.
+        assertEquals(listOf(12, 12), room.party().path("players").map { it.path("score").asInt() })
+    }
+
+    @Test
+    fun `the host chooses how many rounds`() {
+        val room = Party(2, start = false)
+        fun selected() = Regex("<option value=\"(\\d+)\" selected").find(room.host.get("/party/host").body())?.groupValues?.get(1)
+        assertEquals("6", selected())
+
+        room.host.form("/party/host/refresh", "rounds=999")
+        assertEquals("20", selected(), "kept in range")
+        room.host.form("/party/host/start", "rounds=1")
+        room.host.form("/party/host/refresh", "rounds=9")
+        assertEquals("1", selected(), "locked once started")
+        assertEquals(1, room.party().path("rounds").asInt())
+
+        repeat(2) { turn ->
+            room.pick(room.players[turn])
+            room.players.forEach { room.answer(it) }
+            room.next(room.players[0])
+        }
+
+        assertEquals("finished", room.party().path("stage").asText())
+        room.host.form("/party/host/reset")
+        assertEquals("1", selected(), "remembered for the next game")
     }
 
     @Test
@@ -226,8 +250,8 @@ class PartyFlowIntegrationTest {
         val model = ExtendedModelMap()
         hostController.host(model, session, phone)
         runBlocking {
-            hostController.resetUsed(false, false, session, phone)
-            hostController.removeTheme("test.json", false, false, session, phone)
+            hostController.resetUsed(false, false, null, session, phone)
+            hostController.removeTheme("test.json", false, false, null, session, phone)
         }
 
         assertEquals(false, model["onHostComputer"])

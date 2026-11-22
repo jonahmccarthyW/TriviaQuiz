@@ -1,9 +1,9 @@
 package com.timeless.triviaquiz.controller
 
+import com.timeless.triviaquiz.game.GUESSER_POINTS
 import com.timeless.triviaquiz.game.GameRoom
 import com.timeless.triviaquiz.game.PartyStage
 import com.timeless.triviaquiz.game.PartyTurn
-import com.timeless.triviaquiz.game.ROUND_DIFFICULTIES
 import com.timeless.triviaquiz.game.Theme
 import java.time.Duration
 import java.time.Instant
@@ -50,7 +50,8 @@ data class PartyRevealView(
     val othersCorrect: Int,
     val bonus: Int,
     val penalty: Int,
-    val points: Int
+    val points: Int,
+    val guesserPoints: Int
 )
 
 /** The Theme Party part of [RoomStateView], tailored to who is asking. */
@@ -95,7 +96,7 @@ internal fun buildPartyView(room: GameRoom, viewerId: String?, themes: List<Them
                 )
             },
             round = 0,
-            rounds = ROUND_DIFFICULTIES.size,
+            rounds = 0, // Not final until the host presses start.
             difficulty = null,
             picker = null,
             nextPicker = null,
@@ -128,7 +129,7 @@ internal fun buildPartyView(room: GameRoom, viewerId: String?, themes: List<Them
             )
         },
         round = game.roundIndex + 1,
-        rounds = ROUND_DIFFICULTIES.size,
+        rounds = game.rounds,
         difficulty = game.difficulty,
         picker = picker?.name,
         nextPicker = game.nextPicker?.name,
@@ -161,6 +162,7 @@ private fun PartyTurn.revealView(viewerId: String?): PartyRevealView? = score?.l
         othersCorrect = it.othersCorrect,
         bonus = it.bonus,
         penalty = it.penalty,
-        points = it.total
+        points = it.total,
+        guesserPoints = GUESSER_POINTS
     )
 }

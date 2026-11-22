@@ -8,27 +8,29 @@ class ThemePartyScoringTest {
 
     @Test
     fun `bonus on with no other correct answer gives the picker nothing`() {
-        val score = scoreQuestion(pickerCorrect = true, othersCorrect = 0, bonusNeedsSecond = true)
+        val score = scoreQuestion(pickerCorrect = true, othersCorrect = 0, playerCount = 4, bonusNeedsSecond = true)
 
         assertEquals(0, score.bonus)
         assertEquals(0, score.total)
     }
 
     @Test
-    fun `bonus on with one other correct answer gives the picker five, less that player's one`() {
-        val score = scoreQuestion(pickerCorrect = true, othersCorrect = 1, bonusNeedsSecond = true)
+    fun `bonus on with one other correct answer gives the picker the player count, less one`() {
+        val score = scoreQuestion(pickerCorrect = true, othersCorrect = 1, playerCount = 4, bonusNeedsSecond = true)
 
-        assertEquals(5, score.bonus)
+        assertEquals(4, score.bonus)
         assertEquals(1, score.penalty)
-        assertEquals(4, score.total)
+        assertEquals(3, score.total)
     }
 
     @Test
-    fun `bonus off gives the picker five however many others were right`() {
-        for (others in 0..7) {
-            val score = scoreQuestion(pickerCorrect = true, othersCorrect = others, bonusNeedsSecond = false)
+    fun `bonus off gives the picker the player count however many others were right`() {
+        for (players in 2..8) {
+            for (others in 0 until players) {
+                val score = scoreQuestion(pickerCorrect = true, others, players, bonusNeedsSecond = false)
 
-            assertEquals(5, score.bonus, "$others others correct")
+                assertEquals(players, score.bonus, "$others of $players players")
+            }
         }
     }
 
@@ -37,7 +39,7 @@ class ThemePartyScoringTest {
         for (bonusNeedsSecond in listOf(true, false)) {
             for (pickerCorrect in listOf(true, false)) {
                 for (others in 0..7) {
-                    val score = scoreQuestion(pickerCorrect, others, bonusNeedsSecond)
+                    val score = scoreQuestion(pickerCorrect, others, playerCount = 8, bonusNeedsSecond)
 
                     assertEquals(others, score.penalty)
                     assertEquals(score.bonus - others, score.total)
@@ -50,7 +52,7 @@ class ThemePartyScoringTest {
     fun `a wrong picker never gets the bonus`() {
         for (bonusNeedsSecond in listOf(true, false)) {
             for (others in 0..7) {
-                assertEquals(0, scoreQuestion(false, others, bonusNeedsSecond).bonus)
+                assertEquals(0, scoreQuestion(false, others, 8, bonusNeedsSecond).bonus)
             }
         }
     }

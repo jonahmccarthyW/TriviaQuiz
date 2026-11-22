@@ -54,14 +54,17 @@ class PartyTurn(
  * [MultiplayerGame] it has no Spring or network dependencies: time is passed in, and the caller
  * provides the locking ([GameRoom.mutex]).
  *
- * [bonusNeedsSecond] and [timeLimit] are fixed at construction, which is what locks the host's
- * settings for the game.
+ * [bonusNeedsSecond], [timeLimit] and [rounds] are fixed at construction, which is what locks the
+ * host's settings for the game.
  */
 class ThemePartyGame(
     players: List<PartyPlayer>,
     val bonusNeedsSecond: Boolean,
-    val timeLimit: Boolean = false
+    val timeLimit: Boolean = false,
+    val rounds: Int = DEFAULT_ROUNDS
 ) {
+
+    private val difficulties = roundDifficulties(rounds)
 
     private val seats = players.toMutableList()
 
@@ -93,7 +96,7 @@ class ThemePartyGame(
         get() = seats[pickerIndex]
 
     val difficulty: String
-        get() = ROUND_DIFFICULTIES[roundIndex]
+        get() = difficulties[roundIndex]
 
     val isOver: Boolean
         get() = stage == PartyStage.FINISHED
@@ -101,7 +104,7 @@ class ThemePartyGame(
     /** Who picks after this turn, or null if it is the last one. */
     val nextPicker: PartyPlayer?
         get() {
-            val lastTurn = roundIndex == ROUND_DIFFICULTIES.lastIndex && pickerIndex == seats.lastIndex
+            val lastTurn = roundIndex == difficulties.lastIndex && pickerIndex == seats.lastIndex
             return if (isOver || lastTurn) null else seats[(pickerIndex + 1) % seats.size]
         }
 
@@ -206,11 +209,13 @@ class ThemePartyGame(
         val score = scoreQuestion(
             pickerCorrect = pickerId in correctIds,
             othersCorrect = correctIds.count { it != pickerId },
+            playerCount = seats.size,
             bonusNeedsSecond = bonusNeedsSecond
         )
         current.score = score
         current.deadline = null
         scores[pickerId] = scoreOf(pickerId) + score.total
+        correctIds.filter { it != pickerId }.forEach { scores[it] = scoreOf(it) + GUESSER_POINTS }
         askedQuestions.add(current.question.question)
         stage = PartyStage.REVEAL
     }
@@ -218,7 +223,7 @@ class ThemePartyGame(
     /** Starts the turn at [pickerIndex], which is one past the last seat when a round has ended. */
     private fun startTurn() {
         if (pickerIndex >= seats.size) {
-            if (roundIndex == ROUND_DIFFICULTIES.lastIndex) return finish()
+            if (roundIndex == difficulties.lastIndex) return finish()
             pickerIndex = 0
             roundIndex++
         }

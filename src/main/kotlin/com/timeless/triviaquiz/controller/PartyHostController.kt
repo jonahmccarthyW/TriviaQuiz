@@ -2,13 +2,14 @@ package com.timeless.triviaquiz.controller
 
 import com.timeless.triviaquiz.game.GameRoom
 import com.timeless.triviaquiz.game.PartyPlayer
-import com.timeless.triviaquiz.game.ROUND_DIFFICULTIES
+import com.timeless.triviaquiz.game.ROUND_OPTIONS
 import com.timeless.triviaquiz.game.RoomMode
 import com.timeless.triviaquiz.game.RoomPhase
 import com.timeless.triviaquiz.game.TIME_CUT_FLOOR
 import com.timeless.triviaquiz.game.TIME_CUT_PER_ANSWER
 import com.timeless.triviaquiz.game.TIME_PER_PLAYER
 import com.timeless.triviaquiz.game.ThemePartyGame
+import com.timeless.triviaquiz.game.roundDifficulties
 import com.timeless.triviaquiz.service.GameRoomService
 import com.timeless.triviaquiz.service.ThemeLoader
 import jakarta.servlet.http.HttpServletRequest
@@ -28,11 +29,14 @@ import java.net.InetAddress
 /** A theme as the host page lists it: no questions, as any device on the LAN can open that page. */
 data class ThemeSummary(val id: String, val name: String, val used: Int, val total: Int)
 
+/** One option in the host's rounds dropdown. */
+data class RoundChoice(val count: Int, val label: String, val selected: Boolean)
+
 /**
  * The Theme Party host screen. It has its own routes and session key, so one browser's classic room
  * and party room can't act on each other.
  *
- * The settings checkboxes share a form with "Refresh themes", "Reset used questions", "Remove" and
+ * The settings share a form with "Refresh themes", "Reset used questions", "Remove" and
  * "Start", and all save them: that way none loses the host's choices and start always uses what is on screen.
  */
 @Controller
@@ -57,7 +61,7 @@ class PartyHostController(
         model["secondsPerPlayer"] = TIME_PER_PLAYER.seconds
         model["secondsPerAnswer"] = TIME_CUT_PER_ANSWER.seconds
         model["secondsFloor"] = TIME_CUT_FLOOR.seconds
-        model["rounds"] = ROUND_DIFFICULTIES.size
+        model["roundChoices"] = roundChoices(room.rounds)
         model["themes"] = catalog.themes.map { ThemeSummary(it.id, it.name, it.usedCount, it.questions.size) }
         model["themeErrors"] = catalog.errors
         model["onHostComputer"] = isHostComputer(request)
@@ -69,11 +73,12 @@ class PartyHostController(
     suspend fun refresh(
         @RequestParam(defaultValue = "false") bonusNeedsSecond: Boolean,
         @RequestParam(defaultValue = "false") timeLimit: Boolean,
+        @RequestParam(required = false) rounds: Int?,
         session: HttpSession
     ): String {
         val room = hostedRoom(session) ?: return "redirect:/party/host"
         room.mutex.withLock {
-            saveSettings(room, bonusNeedsSecond, timeLimit)
+            saveSettings(room, bonusNeedsSecond, timeLimit, rounds)
         }
         return "redirect:/party/host"
     }
@@ -83,6 +88,7 @@ class PartyHostController(
     suspend fun resetUsed(
         @RequestParam(defaultValue = "false") bonusNeedsSecond: Boolean,
         @RequestParam(defaultValue = "false") timeLimit: Boolean,
+        @RequestParam(required = false) rounds: Int?,
         session: HttpSession,
         request: HttpServletRequest
     ): String {
@@ -90,7 +96,7 @@ class PartyHostController(
         if (!isHostComputer(request)) return "redirect:/party/host"
         val saved = withContext(Dispatchers.IO) { themeLoader.resetUsed() }
         room.mutex.withLock {
-            saveSettings(room, bonusNeedsSecond, timeLimit)
+            saveSettings(room, bonusNeedsSecond, timeLimit, rounds)
             room.notice = if (saved) null else "Couldn't reset the used questions in every theme file."
             room.touch()
         }
@@ -103,6 +109,7 @@ class PartyHostController(
         @RequestParam theme: String,
         @RequestParam(defaultValue = "false") bonusNeedsSecond: Boolean,
         @RequestParam(defaultValue = "false") timeLimit: Boolean,
+        @RequestParam(required = false) rounds: Int?,
         session: HttpSession,
         request: HttpServletRequest
     ): String {
@@ -111,7 +118,7 @@ class PartyHostController(
 
         val removed = withContext(Dispatchers.IO) { themeLoader.remove(theme) }
         room.mutex.withLock {
-            saveSettings(room, bonusNeedsSecond, timeLimit)
+            saveSettings(room, bonusNeedsSecond, timeLimit, rounds)
             room.notice = if (removed) null else "Couldn't remove that theme."
             room.touch()
         }
@@ -135,6 +142,7 @@ class PartyHostController(
     suspend fun start(
         @RequestParam(defaultValue = "false") bonusNeedsSecond: Boolean,
         @RequestParam(defaultValue = "false") timeLimit: Boolean,
+        @RequestParam(required = false) rounds: Int?,
         session: HttpSession
     ): String {
         val room = hostedRoom(session) ?: return "redirect:/party/host"
@@ -142,7 +150,7 @@ class PartyHostController(
 
         room.mutex.withLock {
             if (room.phase != RoomPhase.LOBBY) return "redirect:/party/host"
-            saveSettings(room, bonusNeedsSecond, timeLimit)
+            saveSettings(room, bonusNeedsSecond, timeLimit, rounds)
 
             room.notice = when {
                 room.lobby.size < GameRoomService.MIN_PLAYERS ->
@@ -154,7 +162,8 @@ class PartyHostController(
                 room.party = ThemePartyGame(
                     players = room.lobby.map { PartyPlayer(it.playerId, it.name) },
                     bonusNeedsSecond = bonusNeedsSecond,
-                    timeLimit = timeLimit
+                    timeLimit = timeLimit,
+                    rounds = room.rounds
                 )
             }
             room.touch()
@@ -176,10 +185,18 @@ class PartyHostController(
         return "redirect:/"
     }
 
-    private fun saveSettings(room: GameRoom, bonusNeedsSecond: Boolean, timeLimit: Boolean) {
+    /** A missing [rounds] keeps the room's choice: unlike an unticked box, it doesn't mean off. */
+    private fun saveSettings(room: GameRoom, bonusNeedsSecond: Boolean, timeLimit: Boolean, rounds: Int?) {
         if (room.phase != RoomPhase.LOBBY) return
+        rounds?.let { room.rounds = it.coerceIn(ROUND_OPTIONS) }
         room.bonusNeedsSecond = bonusNeedsSecond
         room.timeLimit = timeLimit
+    }
+
+    private fun roundChoices(selected: Int): List<RoundChoice> = ROUND_OPTIONS.map { count ->
+        val split = roundDifficulties(count).groupingBy { it }.eachCount()
+            .entries.joinToString { "${it.value} ${it.key}" }
+        RoundChoice(count, "$count ${if (count == 1) "round" else "rounds"} ($split)", count == selected)
     }
 
     // Any phone on the LAN can open a host page of its own, so hosting a room isn't enough to be

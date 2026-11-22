@@ -3,7 +3,6 @@ package com.timeless.triviaquiz.controller
 import com.timeless.triviaquiz.game.CATEGORIES_PER_PLAYER
 import com.timeless.triviaquiz.game.LobbyPlayer
 import com.timeless.triviaquiz.game.MpCategory
-import com.timeless.triviaquiz.game.ROUND_DIFFICULTIES
 import com.timeless.triviaquiz.game.RoomMode
 import com.timeless.triviaquiz.game.RoomPhase
 import com.timeless.triviaquiz.service.GameRoomService
@@ -169,7 +168,6 @@ class JoinController(
     private fun renderPartyJoinForm(model: Model, code: String, enteredName: String, canJoin: Boolean = true): String {
         model["title"] = "Join the Theme Party"
         model["canJoin"] = canJoin
-        model["rounds"] = ROUND_DIFFICULTIES.size
         model["code"] = code
         model["name"] = enteredName
         return "party-join"

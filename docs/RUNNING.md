@@ -99,15 +99,16 @@ For your own themes:
 1. On the computer, open <http://localhost:8080/party/host>.
 2. On each phone, on the same Wi-Fi, open the address shown on that page and enter a name. You need
    at least 2 players, and nobody can join after the start.
-3. Choose whether to tick **Bonus needs a second correct answer** and **Time limit**, then click
-   **Start game**. Both are locked until the next game.
-4. There are 6 rounds: 2 easy, 2 medium, then 2 hard. In each round every player takes one turn.
+3. Choose the number of **Rounds** (1 to 20) and whether to tick **Bonus needs a second correct
+   answer** and **Time limit**, then click **Start game**. All three are locked until the next game.
+4. The default is 6 rounds: 2 easy, 2 medium, then 2 hard. Other numbers are split as evenly as
+   possible, getting harder as the game goes on. In each round every player takes one turn.
 5. On your turn you pick a theme, and everyone answers one question from it. An answer can't be changed.
    With **Time limit** on, the clock starts at 4 seconds per player and each answer takes 2 seconds
    off, but can't push it below 3. Without it there's no limit.
 6. When everyone has answered, or time runs out, the answer and explanation show. Any player can tap **Next** to move
    everyone on.
-7. After round 6, the highest score wins. Ties share the win.
+7. After the last round, the highest score wins. Ties share the win.
 
 The scores are always on screen. On the host page each player has a **Kick** button, for when
 someone has stopped answering. **Leave game** removes that player straight away. If only one player
@@ -128,13 +129,16 @@ usually share a session, so they count as one player.
 
 ### Scoring
 
-Only the picker's score changes during their turn:
+For the picker:
 
-- +5 if the picker is right. With the bonus setting ticked, this only counts if at least one other
-  player is right too.
+- If right, plus the number of players in the game, counting the picker. With the bonus setting
+  ticked, this only counts if at least one other player is right too.
 - -1 for each other player who is right, even if the picker is wrong.
 
-For example, if the picker and one other player are both right, the picker gets 5 - 1 = 4.
+For everyone else: +1 if right, whether or not the picker was.
+
+For example, with 4 players, if the picker and one other are right, the picker gets 4 - 1 = 3 and
+the other gets 1. Someone who has been kicked or has left doesn't count towards the number of players.
 
 ## Other modes
 

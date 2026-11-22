@@ -1,14 +1,24 @@
 package com.timeless.triviaquiz.game
 
 /**
- * How many rounds are played at each difficulty, in order. A theme needs at least this many
- * questions of each to load.
+ * The difficulties from first to last, with how many rounds of each a default game has. A theme
+ * needs at least this many questions of each to load, however many rounds are played.
  */
 val THEME_QUESTION_SPLIT: Map<String, Int> = linkedMapOf("easy" to 2, "medium" to 2, "hard" to 2)
 
-/** The difficulty of each round, so also how many rounds there are. */
-val ROUND_DIFFICULTIES: List<String> =
-    THEME_QUESTION_SPLIT.flatMap { (difficulty, count) -> List(count) { difficulty } }
+val DEFAULT_ROUNDS: Int = THEME_QUESTION_SPLIT.values.sum()
+
+/** What the host can choose from. */
+val ROUND_OPTIONS: IntRange = 1..20
+
+/**
+ * The difficulty of each round: shared out as evenly as possible and never getting easier. When it
+ * doesn't divide evenly, the earlier difficulties get the extra rounds.
+ */
+fun roundDifficulties(rounds: Int): List<String> {
+    val difficulties = THEME_QUESTION_SPLIT.keys.toList()
+    return List(rounds) { difficulties[it * difficulties.size / rounds] }
+}
 
 /** A question as written in a theme file. [used] is set once its answer has been revealed. */
 data class ThemeQuestion(

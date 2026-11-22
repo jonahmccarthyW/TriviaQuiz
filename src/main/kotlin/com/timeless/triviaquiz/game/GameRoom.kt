@@ -71,6 +71,9 @@ class GameRoom(val code: String, val mode: RoomMode = RoomMode.CLASSIC) {
     /** Likewise the host's lobby setting, copied by the game when it starts. */
     var timeLimit: Boolean = false
 
+    /** Likewise the host's lobby setting, copied by the game when it starts. */
+    var rounds: Int = DEFAULT_ROUNDS
+
     /**
      * The [version] at which the current party questions opened. Everyone answers at once and each
      * answer bumps [version], so requiring an exact match would reject players for each other's

@@ -51,6 +51,32 @@ class ThemePartyGameTest {
     }
 
     @Test
+    fun `any number of rounds is shared out evenly and never gets easier`() {
+        val order = THEME_QUESTION_SPLIT.keys.toList()
+        for (count in ROUND_OPTIONS) {
+            val levels = roundDifficulties(count).map { order.indexOf(it) }
+            val perLevel = order.indices.map { level -> levels.count { it == level } }
+
+            assertEquals(count, levels.size)
+            assertEquals(levels.sorted(), levels)
+            assertTrue(perLevel.max() - perLevel.min() <= 1, "$count rounds: $perLevel")
+        }
+    }
+
+    @Test
+    fun `a game lasts the chosen number of rounds`() {
+        for (count in listOf(1, 4, 20)) {
+            val game = ThemePartyGame(listOf("a", "b").map { PartyPlayer(it, it) }, false, rounds = count)
+
+            repeat(count * 2 - 1) { game.playTurn() }
+            assertNull(game.nextPicker)
+            game.playTurn()
+
+            assertTrue(game.isOver, "$count rounds")
+        }
+    }
+
+    @Test
     fun `the question has the round's difficulty`() {
         val game = game("a", "b")
         repeat(4) { game.playTurn() } // Two rounds.
@@ -94,12 +120,32 @@ class ThemePartyGameTest {
     }
 
     @Test
-    fun `only the picker's score moves`() {
+    fun `the picker gets the player count less one per other, and a right guesser gets one`() {
         val game = game()
 
         game.playToReveal("a", "b")
 
-        assertEquals(listOf(4, 0, 0), game.players.map { game.scoreOf(it.playerId) })
+        assertEquals(listOf(2, 1, 0), game.players.map { game.scoreOf(it.playerId) })
+    }
+
+    @Test
+    fun `a guesser still scores when the picker is wrong`() {
+        val game = game()
+
+        game.playToReveal("b", "c")
+
+        assertEquals(listOf(-2, 1, 1), game.players.map { game.scoreOf(it.playerId) })
+    }
+
+    @Test
+    fun `a guesser still scores when the picker's bonus doesn't`() {
+        val game = ThemePartyGame(listOf("a", "b").map { PartyPlayer(it, it) }, bonusNeedsSecond = true)
+
+        game.playToReveal("a")
+        game.next("a")
+        game.playToReveal("a")
+
+        assertEquals(1, game.scoreOf("a"))
     }
 
     @Test
@@ -135,7 +181,7 @@ class ThemePartyGameTest {
         assertTrue(game.remove("c"))
 
         assertEquals(PartyStage.REVEAL, game.stage)
-        assertEquals(5, game.scoreOf("a"))
+        assertEquals(2, game.scoreOf("a"), "two are left")
     }
 
     @Test
@@ -148,7 +194,7 @@ class ThemePartyGameTest {
         game.answer("a", "right")
         game.answer("b", "wrong")
 
-        assertEquals(5, game.scoreOf("a"))
+        assertEquals(2, game.scoreOf("a"))
     }
 
     @Test
@@ -286,7 +332,7 @@ class ThemePartyGameTest {
         assertTrue(game.expire(after(6)))
 
         assertEquals(PartyStage.REVEAL, game.stage)
-        assertEquals(5, game.scoreOf("a"))
+        assertEquals(2, game.scoreOf("a"))
         assertFalse(game.turn!!.isCorrect("b"))
         assertFalse(game.expire(after(999)), "a reveal has no clock")
     }
