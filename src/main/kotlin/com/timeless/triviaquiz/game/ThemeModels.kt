@@ -1,24 +1,28 @@
 package com.timeless.triviaquiz.game
 
 /**
- * The difficulties from first to last, with how many rounds of each a default game has. A theme
- * needs at least this many questions of each to load, however many rounds are played.
+ * The difficulties from first to last, with how many questions of each a theme needs to load. It
+ * needs them however many rounds of each are played.
  */
 val THEME_QUESTION_SPLIT: Map<String, Int> = linkedMapOf("easy" to 2, "medium" to 2, "hard" to 2)
 
-val DEFAULT_ROUNDS: Int = THEME_QUESTION_SPLIT.values.sum()
+const val DEFAULT_ROUNDS = 6
 
-/** What the host can choose from. */
-val ROUND_OPTIONS: IntRange = 1..20
+/** With the theme limit on, how many themes a picker is offered. */
+const val THEMES_OFFERED = 6
 
-/**
- * The difficulty of each round: shared out as evenly as possible and never getting easier. When it
- * doesn't divide evenly, the earlier difficulties get the extra rounds.
- */
-fun roundDifficulties(rounds: Int): List<String> {
-    val difficulties = THEME_QUESTION_SPLIT.keys.toList()
-    return List(rounds) { difficulties[it * difficulties.size / rounds] }
+/** How many rounds of each difficulty a game has unless the host changes it. None are easy. */
+val DEFAULT_ROUND_COUNTS: Map<String, Int> = run {
+    val played = THEME_QUESTION_SPLIT.keys - "easy"
+    THEME_QUESTION_SPLIT.mapValues { (difficulty, _) -> if (difficulty in played) DEFAULT_ROUNDS / played.size else 0 }
 }
+
+/** What the host can choose from for each difficulty. */
+val ROUND_OPTIONS: IntRange = 0..20
+
+/** The difficulty of each round, always from the first difficulty to the last. */
+fun roundDifficulties(counts: Map<String, Int>): List<String> =
+    THEME_QUESTION_SPLIT.keys.flatMap { difficulty -> List(counts[difficulty] ?: 0) { difficulty } }
 
 /** A question as written in a theme file. [used] is set once its answer has been revealed. */
 data class ThemeQuestion(
@@ -47,6 +51,10 @@ data class Theme(val id: String, val name: String, val questions: List<ThemeQues
 
     val usedCount: Int
         get() = questions.count { it.used }
+
+    /** Whether [drawQuestion] can give a question that's neither used nor asked this game. */
+    fun hasFreshQuestion(difficulty: String, askedThisGame: Set<String>): Boolean =
+        questions.any { it.difficulty == difficulty && !it.used && it.question !in askedThisGame }
 
     /**
      * Picks one question of [difficulty], preferring unused ones, then ones used in earlier games.

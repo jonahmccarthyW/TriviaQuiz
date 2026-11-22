@@ -133,7 +133,7 @@ class PartyFlowIntegrationTest {
 
         val answering = room.party(bob)
         val question = answering.path("question").path("question").asText()
-        assertTrue(question.startsWith("easy"))
+        assertTrue(question.startsWith("medium"), "no easy by default")
         assertTrue(answering.path("reveal").isNull)
         assertFalse("correctAnswer" in answering.toString() || "Because." in answering.toString())
 
@@ -201,14 +201,20 @@ class PartyFlowIntegrationTest {
     @Test
     fun `the host chooses how many rounds`() {
         val room = Party(2, start = false)
-        fun selected() = Regex("<option value=\"(\\d+)\" selected").find(room.host.get("/party/host").body())?.groupValues?.get(1)
-        assertEquals("6", selected())
+        fun selected() = Regex("<option value=\"(\\d+)\" selected")
+            .findAll(room.host.get("/party/host").body()).map { it.groupValues[1].toInt() }.toList()
+        assertEquals(6, selected().sum())
 
-        room.host.form("/party/host/refresh", "rounds=999")
-        assertEquals("20", selected(), "kept in range")
-        room.host.form("/party/host/start", "rounds=1")
-        room.host.form("/party/host/refresh", "rounds=9")
-        assertEquals("1", selected(), "locked once started")
+        room.host.form("/party/host/refresh", "rounds=999&rounds=-4&rounds=5")
+        assertEquals(listOf(20, 0, 5), selected(), "kept in range")
+
+        room.host.form("/party/host/start", "rounds=0&rounds=0&rounds=0")
+        assertEquals("lobby", room.party().path("stage").asText())
+        assertTrue("at least one round" in room.host.state(room.code).path("notice").asText())
+
+        room.host.form("/party/host/start", "rounds=0&rounds=0&rounds=1")
+        room.host.form("/party/host/refresh", "rounds=9&rounds=9&rounds=9")
+        assertEquals(listOf(0, 0, 1), selected(), "locked once started")
         assertEquals(1, room.party().path("rounds").asInt())
 
         repeat(2) { turn ->
@@ -219,7 +225,30 @@ class PartyFlowIntegrationTest {
 
         assertEquals("finished", room.party().path("stage").asText())
         room.host.form("/party/host/reset")
-        assertEquals("1", selected(), "remembered for the next game")
+        assertEquals(listOf(0, 0, 1), selected(), "remembered for the next game")
+    }
+
+    @Test
+    fun `the theme limit is on by default and enforced by the server`() {
+        val ids = (1..8).map { "limit$it.json" }
+        ids.forEach { themesDir.resolve(it).writeText(themesDir.resolve("test.json").readText()) }
+        try {
+            val room = Party(2, start = false)
+            assertTrue("name=\"limitThemes\" value=\"true\" checked" in room.host.get("/party/host").body())
+            room.host.form("/party/host/start", "limitThemes=true")
+            val picker = room.players[0]
+
+            val offered = room.party(picker).path("themes").map { it.path("id").asText() }
+            assertEquals(6, offered.size)
+            assertEquals(offered, room.party(picker).path("themes").map { it.path("id").asText() })
+            assertTrue(room.party(room.players[1]).path("themes").isNull, "only the picker sees them")
+
+            val other = (ids + "test.json").first { it !in offered }
+            assertEquals(409, picker.act(room.code, "pick", mapOf("version" to room.version(), "theme" to other)))
+            assertEquals(200, picker.act(room.code, "pick", mapOf("version" to room.version(), "theme" to offered[0])))
+        } finally {
+            ids.forEach { Files.deleteIfExists(themesDir.resolve(it)) }
+        }
     }
 
     @Test
@@ -250,8 +279,8 @@ class PartyFlowIntegrationTest {
         val model = ExtendedModelMap()
         hostController.host(model, session, phone)
         runBlocking {
-            hostController.resetUsed(false, false, null, session, phone)
-            hostController.removeTheme("test.json", false, false, null, session, phone)
+            hostController.resetUsed(false, false, false, null, session, phone)
+            hostController.removeTheme("test.json", false, false, false, null, session, phone)
         }
 
         assertEquals(false, model["onHostComputer"])

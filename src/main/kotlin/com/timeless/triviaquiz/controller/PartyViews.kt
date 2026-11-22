@@ -139,7 +139,7 @@ internal fun buildPartyView(room: GameRoom, viewerId: String?, themes: List<Them
         millisLeft = game.turn?.deadline?.let { Duration.between(now, it).toMillis().coerceAtLeast(0) },
         millisAllowed = game.turn?.timeAllowed?.toMillis(),
         theme = game.turn?.themeName,
-        themes = if (game.canPick(viewerId)) themes.map { ThemeChoiceView(it.id, it.name) } else null,
+        themes = if (game.canPick(viewerId)) game.themeChoices(themes).map { ThemeChoiceView(it.id, it.name) } else null,
         question = game.turn?.takeIf { game.stage == PartyStage.ANSWERING }?.questionView(viewerId),
         reveal = game.turn?.takeIf { game.stage == PartyStage.REVEAL }?.revealView(viewerId),
         winners = game.winners().map { it.name }

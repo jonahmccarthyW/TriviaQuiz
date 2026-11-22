@@ -343,6 +343,9 @@ button.answer { border: 1px solid var(--blue); }
   font-variant-numeric: tabular-nums;
 }
 select.rounds { display: block; width: 100%; min-width: 0; margin-top: 6px; }
+.rounds-heading { margin: 0; font-weight: 600; }
+.round-settings { display: flex; gap: 6px; }
+.round-settings label { flex: 1; min-width: 0; padding: 8px 6px; text-transform: capitalize; }
 button.kick, button.small { padding: 1px 8px; font-size: 0.8rem; }
 @media (prefers-reduced-motion: reduce) {
   .score-rows, .score-row, .score-bar, .score-zero { transition: none; }
@@ -372,6 +375,8 @@ button.theme-choice {
 @media (max-width: 359px) {
   button.theme-choice { font-size: 0.75rem; padding: 4px 2px; }
 }
+.theme-grid.few { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.theme-grid.few .theme-choice { min-height: 80px; padding: 8px; font-size: 1.1rem; }
 /* While picking, the page's own spacing and header give way to the themes. */
 body:has(.theme-grid) .site-header { display: none; }
 body:has(.theme-grid) .container { margin: 0 auto; padding: 8px 10px 16px; }

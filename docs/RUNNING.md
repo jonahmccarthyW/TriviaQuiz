@@ -99,11 +99,11 @@ For your own themes:
 1. On the computer, open <http://localhost:8080/party/host>.
 2. On each phone, on the same Wi-Fi, open the address shown on that page and enter a name. You need
    at least 2 players, and nobody can join after the start.
-3. Choose the number of **Rounds** (1 to 20) and whether to tick **Bonus needs a second correct
-   answer** and **Time limit**, then click **Start game**. All three are locked until the next game.
-4. The default is 6 rounds: 2 easy, 2 medium, then 2 hard. Other numbers are split as evenly as
-   possible, getting harder as the game goes on. In each round every player takes one turn.
-5. On your turn you pick a theme, and everyone answers one question from it. An answer can't be changed.
+3. Choose how many rounds of each difficulty (0 to 20) and whether to tick **Random themes**,
+   **Bonus needs a second correct answer** and **Time limit**, then click **Start game**. They are locked until the next game.
+4. The default is 6 rounds: no easy, 3 medium, then 3 hard. Rounds always go from easiest to
+   hardest. In each round every player takes one turn.
+5. On your turn you pick a theme (with **Random themes** on, from 6 random ones), and everyone answers one question from it. An answer can't be changed.
    With **Time limit** on, the clock starts at 4 seconds per player and each answer takes 2 seconds
    off, but can't push it below 3. Without it there's no limit.
 6. When everyone has answered, or time runs out, the answer and explanation show. Any player can tap **Next** to move

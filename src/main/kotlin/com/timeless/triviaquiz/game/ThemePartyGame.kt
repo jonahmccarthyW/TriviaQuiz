@@ -54,17 +54,24 @@ class PartyTurn(
  * [MultiplayerGame] it has no Spring or network dependencies: time is passed in, and the caller
  * provides the locking ([GameRoom.mutex]).
  *
- * [bonusNeedsSecond], [timeLimit] and [rounds] are fixed at construction, which is what locks the
- * host's settings for the game.
+ * [bonusNeedsSecond], [timeLimit], [limitThemes] and the round counts are fixed at construction,
+ * which is what locks the host's settings for the game.
  */
 class ThemePartyGame(
     players: List<PartyPlayer>,
     val bonusNeedsSecond: Boolean,
     val timeLimit: Boolean = false,
-    val rounds: Int = DEFAULT_ROUNDS
+    roundCounts: Map<String, Int> = DEFAULT_ROUND_COUNTS,
+    val limitThemes: Boolean = false
 ) {
 
-    private val difficulties = roundDifficulties(rounds)
+    private val difficulties = roundDifficulties(roundCounts)
+
+    val rounds: Int = difficulties.size
+
+    init {
+        require(rounds > 0) { "A game needs at least one round." }
+    }
 
     private val seats = players.toMutableList()
 
@@ -91,6 +98,11 @@ class ThemePartyGame(
     // Kept as well as the files' used flags: once a theme is all used, or if saving a flag failed,
     // this is what stops a question coming back minutes after its answer was shown.
     private val askedQuestions = mutableSetOf<String>()
+
+    private val playedThemes = mutableSetOf<String>()
+
+    // This turn's choices, by id. Kept on the server, so reloading the page can't reshuffle them.
+    private val offeredIds = mutableListOf<String>()
 
     val picker: PartyPlayer
         get() = seats[pickerIndex]
@@ -121,9 +133,30 @@ class ThemePartyGame(
         return seats.filter { scoreOf(it.playerId) == best }
     }
 
+    /**
+     * What the picker may choose from. With [limitThemes] it is dealt on the turn's first call and
+     * then stays, except to replace a theme that is no longer in [themes]. Themes with a fresh
+     * question this round come first, then ones not played this game, and otherwise it's random.
+     */
+    fun themeChoices(themes: List<Theme>): List<Theme> {
+        if (!limitThemes) return themes
+        val byId = themes.associateBy { it.id }
+        offeredIds.retainAll(byId.keys)
+        if (offeredIds.size < THEMES_OFFERED) {
+            offeredIds += themes
+                .filter { it.id !in offeredIds }
+                .shuffled()
+                .sortedWith(compareBy({ !it.hasFreshQuestion(difficulty, askedQuestions) }, { it.id in playedThemes }))
+                .take(THEMES_OFFERED - offeredIds.size)
+                .map { it.id }
+        }
+        return offeredIds.map { byId.getValue(it) }
+    }
+
     /** Deals one question of this round's difficulty from the picker's theme. */
     fun pickTheme(playerId: String, theme: Theme, now: Instant = Instant.now()): Boolean {
         if (!canPick(playerId)) return false
+        if (limitThemes && theme.id !in offeredIds) return false
         val question = theme.drawQuestion(difficulty, askedQuestions) ?: return false
 
         val timeAllowed = if (timeLimit) TIME_PER_PLAYER.multipliedBy(seats.size.toLong()) else null
@@ -217,11 +250,13 @@ class ThemePartyGame(
         scores[pickerId] = scoreOf(pickerId) + score.total
         correctIds.filter { it != pickerId }.forEach { scores[it] = scoreOf(it) + GUESSER_POINTS }
         askedQuestions.add(current.question.question)
+        playedThemes.add(current.themeId)
         stage = PartyStage.REVEAL
     }
 
     /** Starts the turn at [pickerIndex], which is one past the last seat when a round has ended. */
     private fun startTurn() {
+        offeredIds.clear()
         if (pickerIndex >= seats.size) {
             if (roundIndex == difficulties.lastIndex) return finish()
             pickerIndex = 0

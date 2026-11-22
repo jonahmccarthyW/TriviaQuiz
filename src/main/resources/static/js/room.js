@@ -18,6 +18,7 @@
   var CLOCK_TICK_MS = 100;
   var URGENT_MS = 3000;
   var SETTLE_MS = 600;
+  var FEW_THEMES = 6; // Few enough for big buttons.
   var ROW_PX = 30; // Must match .score-row's height.
   var RESULT_STAGGER_MS = 120;
   var MIN_SCALE = 10; // So the first few points don't fill the whole track.
@@ -110,7 +111,7 @@
       if (!party.themes.length) {
         content.appendChild(el('p', 'error', 'No themes available. Ask the host to add one.'));
       }
-      var grid = el('div', 'theme-grid');
+      var grid = el('div', 'theme-grid' + (party.themes.length <= FEW_THEMES ? ' few' : ''));
       party.themes.forEach(function (theme) {
         var button = el('button', 'theme-choice', theme.name);
         button.type = 'button';

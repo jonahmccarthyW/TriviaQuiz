@@ -22,13 +22,22 @@
   <button type="submit" formaction="/party/host/refresh" style="display: none"></button>
   <fieldset>
     <legend>Game settings</legend>
+    <p class="rounds-heading">How many rounds of each (one turn each per round)</p>
+    <div class="round-settings">
+      {{#difficultySettings}}
+        <label>
+          {{difficulty}}
+          <select name="rounds" class="rounds"{{^inLobby}} disabled{{/inLobby}}>
+            {{#choices}}
+              <option value="{{count}}"{{#selected}} selected{{/selected}}>{{count}}</option>
+            {{/choices}}
+          </select>
+        </label>
+      {{/difficultySettings}}
+    </div>
     <label>
-      Rounds (one turn each per round)
-      <select name="rounds" class="rounds"{{^inLobby}} disabled{{/inLobby}}>
-        {{#roundChoices}}
-          <option value="{{count}}"{{#selected}} selected{{/selected}}>{{label}}</option>
-        {{/roundChoices}}
-      </select>
+      <input type="checkbox" name="limitThemes" value="true"{{#limitThemes}} checked{{/limitThemes}}{{^inLobby}} disabled{{/inLobby}}>
+      Random themes: each turn the picker can only choose from {{themesOffered}}
     </label>
     <label>
       <input type="checkbox" name="bonusNeedsSecond" value="true"{{#bonusNeedsSecond}} checked{{/bonusNeedsSecond}}{{^inLobby}} disabled{{/inLobby}}>
@@ -93,7 +102,7 @@
 
 <p><a href="/">Back to home</a></p>
 
-<script src="/js/room.js?v=6"></script>
+<script src="/js/room.js?v=7"></script>
 <script>
   startRoom({ code: '{{code}}', mount: document.getElementById('room'), host: true });
 </script>

@@ -23,7 +23,8 @@ class ThemePartyGameTest {
     )
 
     private fun game(vararg ids: String = arrayOf("a", "b", "c")) =
-        ThemePartyGame(ids.map { PartyPlayer(it, it.uppercase()) }, bonusNeedsSecond = false)
+        // Two of each, so every difficulty is played.
+        ThemePartyGame(ids.map { PartyPlayer(it, it.uppercase()) }, false, roundCounts = THEME_QUESTION_SPLIT)
 
     /** Picks, and has everyone answer, with only [correct] getting it right. */
     private fun ThemePartyGame.playToReveal(vararg correct: String, theme: Theme = theme()) {
@@ -51,28 +52,29 @@ class ThemePartyGameTest {
     }
 
     @Test
-    fun `any number of rounds is shared out evenly and never gets easier`() {
-        val order = THEME_QUESTION_SPLIT.keys.toList()
-        for (count in ROUND_OPTIONS) {
-            val levels = roundDifficulties(count).map { order.indexOf(it) }
-            val perLevel = order.indices.map { level -> levels.count { it == level } }
+    fun `by default there are six rounds and none are easy`() {
+        val rounds = roundDifficulties(DEFAULT_ROUND_COUNTS)
 
-            assertEquals(count, levels.size)
-            assertEquals(levels.sorted(), levels)
-            assertTrue(perLevel.max() - perLevel.min() <= 1, "$count rounds: $perLevel")
-        }
+        assertEquals(6, rounds.size)
+        assertFalse("easy" in rounds)
     }
 
     @Test
-    fun `a game lasts the chosen number of rounds`() {
-        for (count in listOf(1, 4, 20)) {
-            val game = ThemePartyGame(listOf("a", "b").map { PartyPlayer(it, it) }, false, rounds = count)
+    fun `a game has the chosen rounds of each difficulty, in order`() {
+        val order = THEME_QUESTION_SPLIT.keys.toList()
+        for (counts in listOf(listOf(0, 0, 1), listOf(0, 4, 1), listOf(5, 0, 2), listOf(20, 0, 0))) {
+            val game = ThemePartyGame(
+                listOf("a", "b").map { PartyPlayer(it, it) }, false, roundCounts = order.zip(counts).toMap()
+            )
+            val played = mutableListOf<String>()
 
-            repeat(count * 2 - 1) { game.playTurn() }
-            assertNull(game.nextPicker)
-            game.playTurn()
+            while (!game.isOver) {
+                played += game.difficulty
+                game.playTurn()
+            }
 
-            assertTrue(game.isOver, "$count rounds")
+            val expected = order.indices.flatMap { index -> List(counts[index] * 2) { order[index] } }
+            assertEquals(expected, played)
         }
     }
 
@@ -84,6 +86,64 @@ class ThemePartyGameTest {
         game.pickTheme("a", theme())
 
         assertEquals("medium", game.turn?.question?.difficulty)
+    }
+
+    private fun manyThemes(count: Int = 10) = (1..count).map { theme().copy(id = "t$it.json") }
+
+    private fun limitedGame() = ThemePartyGame(
+        listOf("a", "b").map { PartyPlayer(it, it) }, false, roundCounts = THEME_QUESTION_SPLIT, limitThemes = true
+    )
+
+    @Test
+    fun `the theme limit offers six that stay put, and only those can be picked`() {
+        val game = limitedGame()
+        val themes = manyThemes()
+        val offered = game.themeChoices(themes)
+
+        assertEquals(6, offered.toSet().size)
+        repeat(20) { assertEquals(offered, game.themeChoices(themes)) }
+        assertFalse(game.pickTheme("a", themes.first { it !in offered }))
+        assertTrue(game.pickTheme("a", offered.first()))
+    }
+
+    @Test
+    fun `a new turn gets new choices, without the theme just played`() {
+        val game = limitedGame()
+        val themes = manyThemes(7)
+        val first = game.themeChoices(themes).first()
+        game.playToReveal(theme = first)
+        game.next("a")
+
+        assertFalse(game.pickTheme("b", first), "nothing is offered until the new deal")
+        val second = game.themeChoices(themes)
+        assertEquals(6, second.size)
+        assertFalse(first in second)
+    }
+
+    @Test
+    fun `themes used up for this round come last`() {
+        val fresh = manyThemes(6)
+        val usedUp = (1..10).map { theme { true }.copy(id = "used$it.json") }
+
+        assertEquals(fresh.toSet(), limitedGame().themeChoices(usedUp + fresh).toSet())
+        assertEquals(6, limitedGame().themeChoices(usedUp).size, "still offered when that's all there is")
+    }
+
+    @Test
+    fun `a removed theme is replaced without reshuffling the rest`() {
+        val game = limitedGame()
+        val themes = manyThemes()
+        val before = game.themeChoices(themes)
+
+        val after = game.themeChoices(themes - before.first())
+
+        assertEquals(6, after.size)
+        assertEquals(before.drop(1), after.take(5))
+    }
+
+    @Test
+    fun `without the theme limit every theme is offered`() {
+        assertEquals(10, game().themeChoices(manyThemes()).size)
     }
 
     @Test

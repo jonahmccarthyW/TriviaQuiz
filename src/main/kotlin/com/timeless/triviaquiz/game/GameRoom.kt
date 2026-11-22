@@ -72,7 +72,10 @@ class GameRoom(val code: String, val mode: RoomMode = RoomMode.CLASSIC) {
     var timeLimit: Boolean = false
 
     /** Likewise the host's lobby setting, copied by the game when it starts. */
-    var rounds: Int = DEFAULT_ROUNDS
+    var limitThemes: Boolean = true
+
+    /** Likewise the host's lobby setting, copied by the game when it starts. */
+    var roundCounts: Map<String, Int> = DEFAULT_ROUND_COUNTS
 
     /**
      * The [version] at which the current party questions opened. Everyone answers at once and each
