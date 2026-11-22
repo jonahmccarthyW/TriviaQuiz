@@ -1,0 +1,194 @@
+package com.timeless.triviaquiz.controller
+
+import com.timeless.triviaquiz.game.GameRoom
+import com.timeless.triviaquiz.game.PartyPlayer
+import com.timeless.triviaquiz.game.ROUND_DIFFICULTIES
+import com.timeless.triviaquiz.game.RoomMode
+import com.timeless.triviaquiz.game.RoomPhase
+import com.timeless.triviaquiz.game.TIME_CUT_FLOOR
+import com.timeless.triviaquiz.game.TIME_CUT_PER_ANSWER
+import com.timeless.triviaquiz.game.TIME_PER_PLAYER
+import com.timeless.triviaquiz.game.ThemePartyGame
+import com.timeless.triviaquiz.service.GameRoomService
+import com.timeless.triviaquiz.service.ThemeLoader
+import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpSession
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import org.springframework.http.ResponseEntity
+import org.springframework.stereotype.Controller
+import org.springframework.ui.Model
+import org.springframework.ui.set
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestParam
+import java.net.InetAddress
+
+/** A theme as the host page lists it: no questions, as any device on the LAN can open that page. */
+data class ThemeSummary(val id: String, val name: String, val used: Int, val total: Int)
+
+/**
+ * The Theme Party host screen. It has its own routes and session key, so one browser's classic room
+ * and party room can't act on each other.
+ *
+ * The settings checkboxes share a form with "Refresh themes", "Reset used questions", "Remove" and
+ * "Start", and all save them: that way none loses the host's choices and start always uses what is on screen.
+ */
+@Controller
+class PartyHostController(
+    private val gameRoomService: GameRoomService,
+    private val themeLoader: ThemeLoader
+) {
+
+    @GetMapping("/party/host")
+    fun host(model: Model, session: HttpSession, request: HttpServletRequest): String {
+        val room = hostedRoom(session) ?: gameRoomService.create(RoomMode.THEME_PARTY).also {
+            session.setAttribute(RoomSession.HOSTED_PARTY_CODE, it.code)
+        }
+        val catalog = themeLoader.load()
+
+        model["title"] = "Host a Theme Party"
+        model["code"] = room.code
+        model["joinUrls"] = joinUrls(request, room.code)
+        model["inLobby"] = room.phase == RoomPhase.LOBBY
+        model["bonusNeedsSecond"] = room.bonusNeedsSecond
+        model["timeLimit"] = room.timeLimit
+        model["secondsPerPlayer"] = TIME_PER_PLAYER.seconds
+        model["secondsPerAnswer"] = TIME_CUT_PER_ANSWER.seconds
+        model["secondsFloor"] = TIME_CUT_FLOOR.seconds
+        model["rounds"] = ROUND_DIFFICULTIES.size
+        model["themes"] = catalog.themes.map { ThemeSummary(it.id, it.name, it.usedCount, it.questions.size) }
+        model["themeErrors"] = catalog.errors
+        model["onHostComputer"] = isHostComputer(request)
+        return "party-host"
+    }
+
+    /** Reloads the theme list. The folder is read when the page we redirect to renders. */
+    @PostMapping("/party/host/refresh")
+    suspend fun refresh(
+        @RequestParam(defaultValue = "false") bonusNeedsSecond: Boolean,
+        @RequestParam(defaultValue = "false") timeLimit: Boolean,
+        session: HttpSession
+    ): String {
+        val room = hostedRoom(session) ?: return "redirect:/party/host"
+        room.mutex.withLock {
+            saveSettings(room, bonusNeedsSecond, timeLimit)
+        }
+        return "redirect:/party/host"
+    }
+
+    /** Clears every theme's "used" flags. Only from the computer running the app. */
+    @PostMapping("/party/host/reset-used")
+    suspend fun resetUsed(
+        @RequestParam(defaultValue = "false") bonusNeedsSecond: Boolean,
+        @RequestParam(defaultValue = "false") timeLimit: Boolean,
+        session: HttpSession,
+        request: HttpServletRequest
+    ): String {
+        val room = hostedRoom(session) ?: return "redirect:/party/host"
+        if (!isHostComputer(request)) return "redirect:/party/host"
+        val saved = withContext(Dispatchers.IO) { themeLoader.resetUsed() }
+        room.mutex.withLock {
+            saveSettings(room, bonusNeedsSecond, timeLimit)
+            room.notice = if (saved) null else "Couldn't reset the used questions in every theme file."
+            room.touch()
+        }
+        return "redirect:/party/host"
+    }
+
+    /** Takes a theme out of every game. Only from the computer running the app. */
+    @PostMapping("/party/host/remove-theme")
+    suspend fun removeTheme(
+        @RequestParam theme: String,
+        @RequestParam(defaultValue = "false") bonusNeedsSecond: Boolean,
+        @RequestParam(defaultValue = "false") timeLimit: Boolean,
+        session: HttpSession,
+        request: HttpServletRequest
+    ): String {
+        val room = hostedRoom(session) ?: return "redirect:/party/host"
+        if (!isHostComputer(request)) return "redirect:/party/host"
+
+        val removed = withContext(Dispatchers.IO) { themeLoader.remove(theme) }
+        room.mutex.withLock {
+            saveSettings(room, bonusNeedsSecond, timeLimit)
+            room.notice = if (removed) null else "Couldn't remove that theme."
+            room.touch()
+        }
+        return "redirect:/party/host"
+    }
+
+    /**
+     * Removes a player, in the lobby or mid-game. Called by room.js, so it doesn't redirect. Mid
+     * question this can be what triggers the reveal, as nobody waits for a kicked player.
+     */
+    @PostMapping("/party/host/kick")
+    suspend fun kick(@RequestParam playerId: String, session: HttpSession): ResponseEntity<Void> {
+        val room = hostedRoom(session) ?: return ResponseEntity.notFound().build()
+
+        val kicked = removeFromParty(room, themeLoader) { room.kick(playerId) }
+        return if (kicked) ResponseEntity.noContent().build() else ResponseEntity.notFound().build()
+    }
+
+    /** Starts the game with everyone in the lobby, in join order, and locks the settings. */
+    @PostMapping("/party/host/start")
+    suspend fun start(
+        @RequestParam(defaultValue = "false") bonusNeedsSecond: Boolean,
+        @RequestParam(defaultValue = "false") timeLimit: Boolean,
+        session: HttpSession
+    ): String {
+        val room = hostedRoom(session) ?: return "redirect:/party/host"
+        val hasThemes = themeLoader.load().themes.isNotEmpty()
+
+        room.mutex.withLock {
+            if (room.phase != RoomPhase.LOBBY) return "redirect:/party/host"
+            saveSettings(room, bonusNeedsSecond, timeLimit)
+
+            room.notice = when {
+                room.lobby.size < GameRoomService.MIN_PLAYERS ->
+                    "Need at least ${GameRoomService.MIN_PLAYERS} players to start."
+                !hasThemes -> "Need at least one valid theme to start."
+                else -> null
+            }
+            if (room.notice == null) {
+                room.party = ThemePartyGame(
+                    players = room.lobby.map { PartyPlayer(it.playerId, it.name) },
+                    bonusNeedsSecond = bonusNeedsSecond,
+                    timeLimit = timeLimit
+                )
+            }
+            room.touch()
+        }
+        return "redirect:/party/host"
+    }
+
+    @PostMapping("/party/host/reset")
+    suspend fun reset(session: HttpSession): String {
+        val room = hostedRoom(session) ?: return "redirect:/party/host"
+        room.mutex.withLock { room.resetToLobby() }
+        return "redirect:/party/host"
+    }
+
+    @PostMapping("/party/host/close")
+    fun close(session: HttpSession): String {
+        hostedRoom(session)?.let { gameRoomService.close(it.code) }
+        session.removeAttribute(RoomSession.HOSTED_PARTY_CODE)
+        return "redirect:/"
+    }
+
+    private fun saveSettings(room: GameRoom, bonusNeedsSecond: Boolean, timeLimit: Boolean) {
+        if (room.phase != RoomPhase.LOBBY) return
+        room.bonusNeedsSecond = bonusNeedsSecond
+        room.timeLimit = timeLimit
+    }
+
+    // Any phone on the LAN can open a host page of its own, so hosting a room isn't enough to be
+    // allowed to change theme files. The second test covers the computer browsing to its own LAN address.
+    private fun isHostComputer(request: HttpServletRequest): Boolean =
+        InetAddress.getByName(request.remoteAddr).isLoopbackAddress || request.remoteAddr == request.localAddr
+
+    // The mode check matters: after a close or a reap the code could be reissued to a classic room.
+    private fun hostedRoom(session: HttpSession): GameRoom? =
+        gameRoomService.find(session.getAttribute(RoomSession.HOSTED_PARTY_CODE) as? String)
+            ?.takeIf { it.mode == RoomMode.THEME_PARTY }
+}

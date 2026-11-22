@@ -256,5 +256,159 @@ button.answer { border: 1px solid var(--blue); }
   color: var(--muted);
 }
 
+/* ---- Theme Party ---- */
+
+/* Scores stay in view. Capped, so a big group can't push the question off a phone's screen. */
+.scoreboard {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  max-height: 40vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  margin: 0 0 16px;
+}
+.scoreboard[hidden], .kick[hidden] { display: none; }
+.countdown { display: flex; align-items: center; gap: 10px; padding: 2px 6px 6px; }
+.countdown[hidden] { display: none; }
+.countdown-track {
+  position: relative;
+  flex: 1;
+  height: 16px;
+  overflow: hidden;
+  background: var(--blue-tint);
+  border-radius: 8px;
+}
+.countdown-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--blue);
+  transition: width 0.15s linear, background 0.2s ease;
+}
+.countdown-label { min-width: 2.4em; text-align: right; font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+.countdown.urgent .countdown-fill { background: var(--red); }
+.countdown.urgent .countdown-label { color: var(--red); }
+.score-rows { position: relative; transition: height 0.5s ease; }
+.score-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 30px; /* ROW_PX in room.js */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+  border-radius: 6px;
+  transition: transform 0.8s ease, background 0.3s ease;
+}
+.score-row.current { background: var(--blue-tint); }
+.score-name {
+  flex: 0 0 38%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+.score-row.current .score-name { font-weight: 700; }
+.score-track { position: relative; flex: 1; height: 100%; }
+.score-bar {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  width: 0;
+  background: var(--blue);
+  border-radius: 0 4px 4px 0;
+  transition: left 0.8s ease, width 0.8s ease, background 0.3s ease;
+}
+.score-bar.negative { background: var(--red); border-radius: 4px 0 0 4px; }
+.score-zero {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--muted);
+  transition: left 0.8s ease;
+}
+.score-value {
+  flex: 0 0 2.2em;
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+button.kick, button.small { padding: 1px 8px; font-size: 0.8rem; }
+@media (prefers-reduced-motion: reduce) {
+  .score-rows, .score-row, .score-bar, .score-zero { transition: none; }
+}
+.question-text { font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
+button.next { width: 100%; padding: 14px 16px; }
+/* The locked-in answer has to stand out from the other, disabled, buttons. */
+button.answer.picked:disabled {
+  color: #fff;
+  background: var(--navy-soft);
+  border-color: var(--navy-soft);
+}
+.turn-total { font-weight: 700; color: var(--navy); }
+.reveal-answer { font-weight: 700; color: var(--green); }
+.your-answer { font-weight: 700; color: var(--red); }
+
+/* Who got it right: readable from across the room. */
+.result-banner {
+  color: #fff;
+  border-radius: 10px;
+  padding: 18px 12px;
+  margin: 0 0 12px;
+  text-align: center;
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+.results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.result-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  color: #fff;
+  border-radius: 10px;
+  padding: 8px 6px;
+  text-align: center;
+  animation: result-pop 0.4s ease-out backwards;
+}
+.result-banner.right, .result-tile.right { background: var(--green); }
+.result-banner.wrong, .result-tile.wrong { background: var(--red); }
+.result-mark { font-size: 2.2rem; font-weight: 800; line-height: 1.1; }
+.result-name { max-width: 100%; font-weight: 700; overflow-wrap: anywhere; }
+.result-word { font-size: 0.85rem; font-weight: 700; }
+.results.on-host { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.on-host .result-mark { font-size: 4rem; }
+.on-host .result-name { font-size: 1.5rem; }
+.on-host .result-word { font-size: 1.1rem; }
+
+.score-row.right { background: var(--green-tint); }
+.score-row.wrong { background: var(--red-tint); }
+.score-result { flex: 0 0 1.2em; text-align: center; font-weight: 800; }
+.score-row.right .score-result { color: var(--green); }
+.score-row.wrong .score-result { color: var(--red); }
+
+@keyframes result-pop {
+  from { opacity: 0; transform: scale(0.6); }
+  70% { opacity: 1; transform: scale(1.06); }
+  to { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .result-tile { animation: none; }
+}
+
 .host-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
 .leave { margin: 28px 0 0; }

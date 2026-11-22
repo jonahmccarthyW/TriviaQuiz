@@ -1,0 +1,26 @@
+{{> header}}
+
+<h1>Join Theme Party {{code}}</h1>
+
+<p>There are {{rounds}} rounds. On your turn you pick a theme and everyone answers one question from
+it. Only the picker scores: points for being right, minus points for each other player who is also
+right. Highest score wins.</p>
+
+{{#error}}
+  <p class="error">{{error}}</p>
+{{/error}}
+
+{{#canJoin}}
+<form method="post" action="/j/{{code}}">
+  <p>
+    <label for="name">Your name:</label>
+    <input type="text" id="name" name="name" value="{{name}}" required>
+  </p>
+  <p><button type="submit">Join game</button></p>
+</form>
+{{/canJoin}}
+{{^canJoin}}
+<p><a href="/">Back to home</a></p>
+{{/canJoin}}
+
+{{> footer}}

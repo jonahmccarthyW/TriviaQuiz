@@ -20,6 +20,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./gradlew test --tests TriviaQuestionServiceIntegrationTest
 ./gradlew test --tests RepositoriesTests
 ./gradlew test --tests MultiplayerGameTest
+./gradlew test --tests ThemePartyScoringTest
+./gradlew test --tests ThemePartyGameTest
+./gradlew test --tests PartyFlowIntegrationTest
+./gradlew test --tests ThemeLoaderTest
 
 # Clean
 ./gradlew clean
@@ -47,6 +51,18 @@ Both `spring-boot-starter-web` (MVC) and `spring-boot-starter-webflux` are on th
 - **Single-player** (`GameController`, `/game`): 5 questions with optional category/difficulty filters, graded together, 2-minute timer. Hotseat — state in the `HttpSession`.
 - **Hotseat multiplayer** (`MultiplayerGameController`, `/multiplayer`): players each pick 6 categories and take turns answering easy → medium → hard questions drawn from their remaining categories. A wrong answer ends the turn; the first player to clear all 6 categories wins. All state in one browser's `HttpSession`. The turn rules live in a pure `MultiplayerGame` state machine (`game/MultiplayerModels.kt`) so they can be unit-tested without the network.
 - **Networked multiplayer** (`HostController` `/host`, `JoinController` `/j/{code}` + `/play`, `RoomApiController` `/api/room/...`): the same rules, but everyone plays on their own phone over the LAN. Run the app on a laptop, open `/host` there for the join address and room code, and players browse to it — no app to install.
+- **Theme Party** (`PartyHostController` `/party/host`, then the same `/j/{code}`, `/play` and `/api/room/...` as networked multiplayer): six rounds, each one turn per player in join order. On a turn the picker chooses a theme, everyone answers one question from it, and only the picker scores (`scoreQuestion` in `game/ThemePartyScoring.kt`). Highest score wins; ties are shared.
+
+**How Theme Party works.** A `GameRoom` has a `mode`; party rooms hold a `ThemePartyGame` in `party` and never set `game`.
+- Themes are `themes/*.json` in the working directory (override with `trivia.themes-dir`), re-read on each request by `ThemeLoader`. Format: `{"theme", "questions": [{"difficulty", "question", "correct_answer", "incorrect_answers", "explanation", "used"?}]}`. Invalid files are skipped and listed on the host page.
+- `THEME_QUESTION_SPLIT` (`game/ThemeModels.kt`) sets the rounds and their difficulties (2 easy, 2 medium, 2 hard).
+- The only timer is the optional time limit on answering (constants in `game/ThemePartyGame.kt`). It has no scheduler: the first poll after the deadline reveals. Polling never moves on from a reveal. The last answer also causes the reveal, any player's `/party/next` ends it (exact version match, so the first tap wins), and the host's `/party/host/kick` removes a player nobody should wait for, which can also cause the reveal. So can a player's `/play/leave`: both go through `removeFromParty`.
+- **The app writes to the theme files:** `"used": true` is saved at each reveal, outside the room mutex. Draws prefer questions not asked this game, then unused ones. Any test or manual run that plays a game must point `trivia.themes-dir` at a copy.
+- Removing a theme moves it to `themes/removed/` (never deletes), and, like resetting used flags, is only allowed from the computer running the app, as any phone can open a host page.
+- `PartyQuestionView` omits the answer and explanation; `PartyRevealView` is the only view with them and is built only during the reveal. Theme load errors must not quote file contents, for the same reason.
+- `PartyPlayerView.correct` (who was right) is likewise null outside the reveal.
+- Answers are checked against a version *range* (`questionsOpenedVersion..version`), because simultaneous answers each bump `version`. Picking a theme uses the exact-match check.
+- The party client updates the DOM in place between screens. Don't make it redraw per version: it loses taps. The scoreboard is never rebuilt, or its bars wouldn't animate, and new screens ignore taps briefly so a double tap can't press Next for everyone.
 
 **How networked mode differs from hotseat.** The game rules are shared and unchanged; what changes is where state lives and who is allowed to act:
 
@@ -68,8 +84,8 @@ Rooms are in memory only: restarting the server ends games in progress, and idle
 
 | Layer | Location | Notes |
 |---|---|---|
-| Controllers | `controller/` | `HomeController` (`/`), `QuestionListController` (`/questions`), `GameController` (single-player `/game`), `MultiplayerGameController` (hotseat `/multiplayer`), `HostController` (`/host`), `JoinController` (`/j/{code}`, `/play`), `RoomApiController` (`/api/room/...` JSON) |
-| Session keys | `controller/RoomSession.kt` | The three `HttpSession` attribute names used by the networked game |
+| Controllers | `controller/` | `HomeController` (`/`), `QuestionListController` (`/questions`), `GameController` (single-player `/game`), `MultiplayerGameController` (hotseat `/multiplayer`), `HostController` (`/host`), `JoinController` (`/j/{code}`, `/play`), `RoomApiController` (`/api/room/...` JSON), `PartyHostController` (`/party/host`); `PartyViews.kt` builds the party JSON, `PartyUsedQuestions.kt` saves used flags |
+| Session keys | `controller/RoomSession.kt` | The `HttpSession` attribute names used by the networked game |
 | Service | `service/TriviaQuestionService.kt` | opentdb calls via suspend + `WebClient`. Caches the category list, buffers questions per (category, difficulty) — `getBufferedQuestion()` / `prefetch()` — and serialises outbound calls through `rateLimited()` to stay under opentdb's ~1 request / 5s limit |
 | Question dealing | `service/QuestionDealer.kt` | Puts the next question in front of a `MultiplayerGame`'s current player; shared by both multiplayer modes. Returns false rather than throwing when opentdb refuses |
 | Room registry | `service/GameRoomService.kt` | `ConcurrentHashMap` of live rooms, join-code generation, idle reaping. Also holds the room-wide tunables (`MIN_PLAYERS`, `FEEDBACK_DURATION`, `DEAL_RETRY_DELAY`) |
@@ -79,7 +95,7 @@ Rooms are in memory only: restarting the server ends games in progress, and idle
 | Repository | `repository/Repositories.kt` | `UserRepository` with `findByLogin` |
 | WebClient config | `webclient/WebClientConfig.kt` | Base URL `https://opentdb.com`; `logResponse()` filter is a dev debug aid that consumes and reconstructs the response body |
 | Extensions | `extension/Extensions.kt` | `LocalDateTime.format()`, `String.toSlug()` |
-| Templates | `resources/templates/` | `header`/`footer` partials wrap every page: `header` emits the full `<head>` (charset, viewport, stylesheet link), the branded header bar, and opens `<main class="container">`; `footer` closes it. Pages: `home`, `game`, `result`, `questions` (single-player); `mp-setup`, `mp-play`, `mp-feedback`, `mp-winner`, `mp-message` (hotseat); `host`, `join`, `play` (networked) |
+| Templates | `resources/templates/` | `header`/`footer` partials wrap every page: `header` emits the full `<head>` (charset, viewport, stylesheet link), the branded header bar, and opens `<main class="container">`; `footer` closes it. Pages: `home`, `game`, `result`, `questions` (single-player); `mp-setup`, `mp-play`, `mp-feedback`, `mp-winner`, `mp-message` (hotseat); `host`, `join`, `play` (networked); `party-host`, `party-join` (Theme Party) |
 | Styling | `resources/static/css/styles.css` | Single stylesheet (blue/black/white theme, CSS custom properties). Served at `/css/styles.css` from Spring Boot's static resources. Templates carry a few semantic hooks: `.player`, `.error`, `.banner.ok` / `.banner.bad`, and for the networked game `.join-card`, `.roster`, `.answer`, `.room-status` |
 
 **Database:** H2 in-memory. Hibernate `globally_quoted_identifiers` is enabled (configured in `application.properties`).
@@ -99,6 +115,10 @@ Rooms are in memory only: restarting the server ends games in progress, and idle
 | `service/TriviaQuestionServiceIntegrationTest.kt` | `@SpringBootTest` | Live call to opentdb API — will fail if network is unavailable |
 | `repository/Repositories.kt` | `@DataJpaTest` | `findByLogin` query |
 | `game/MultiplayerGameTest.kt` | plain JUnit 5 | `MultiplayerGame` turn transitions (no Spring, no network) |
+| `game/ThemePartyScoringTest.kt` | plain JUnit 5 | Theme Party scoring (no Spring, no network) |
+| `game/ThemePartyGameTest.kt` | plain JUnit 5 | Theme Party turns, rounds, kicking, question choice (no Spring, no network) |
+| `controller/PartyFlowIntegrationTest.kt` | `@SpringBootTest(webEnvironment=RANDOM_PORT)` | Theme Party over HTTP: answer, next, kick, used flags. Uses a temporary themes folder |
+| `service/ThemeLoaderTest.kt` | plain JUnit 5 | Theme files: valid, malformed, too small, added later, marking and resetting used |
 | `game/GameRoomTest.kt` | plain JUnit 5 | `GameRoom` phases, player-id ↔ seat mapping, reset (no Spring, no network) |
 | `controller/RoomLobbyIntegrationTest.kt` | `@SpringBootTest(webEnvironment=RANDOM_PORT)` | The networked join flow over real HTTP with several cookie jars standing in for devices: page rendering, per-device state, and that a device which isn't up can't answer. Stubs `TriviaQuestionService.getCategories()` and stops before starting a game, so it passes with the network unplugged |
 

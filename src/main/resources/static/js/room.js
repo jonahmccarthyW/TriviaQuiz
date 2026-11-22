@@ -4,19 +4,421 @@
  * is allowed to see, so the only difference between a phone and the host screen here is that the
  * host is never "you" and so never gets answer buttons.
  *
+ * A Theme Party room's state carries a `party` object, and createPartyBoard draws those instead.
+ *
  * Everything is built with textContent rather than innerHTML — questions come from opentdb with
- * HTML entities already decoded, so they can contain markup that must not be executed.
+ * HTML entities already decoded, or from theme files, so they can contain markup that must not be
+ * executed.
  */
 (function (global) {
   'use strict';
 
   var POLL_MS = 1000;
+  var TIMED_POLL_MS = 300; // A second's lag is too much when there are only a few on the clock.
+  var CLOCK_TICK_MS = 100;
+  var URGENT_MS = 3000;
+  var SETTLE_MS = 600;
+  var ROW_PX = 30; // Must match .score-row's height.
+  var RESULT_STAGGER_MS = 120;
+  var MIN_SCALE = 10; // So the first few points don't fill the whole track.
 
   function el(tag, className, text) {
     var node = document.createElement(tag);
     if (className) { node.className = className; }
     if (text !== undefined && text !== null) { node.textContent = text; }
     return node;
+  }
+
+  function points(value) {
+    return (value > 0 ? '+' : '') + value;
+  }
+
+  /*
+   * The Theme Party screen. Unlike the classic one it can't redraw on every version change: each
+   * player's answer bumps the version, and replacing a button while someone's finger is on it
+   * swallows the tap. So the content is rebuilt only when the screen itself changes, and everything
+   * else is updated in place. The scoreboard is never rebuilt, which also lets its bars animate.
+   */
+  function createPartyBoard(code, mount, isHost) {
+    var latest = null;
+    var screenKey = null;
+    var turnKey = null;
+    var settlingUntil = 0;
+    var wasYourPick = false;
+    var updaters = [];
+    var pending = {};
+    var scoreboard = createScoreboard(isHost ? kick : null);
+    var content = el('div');
+    var clock = createClock();
+    scoreboard.node.insertBefore(clock.node, scoreboard.node.firstChild);
+
+    mount.textContent = '';
+    mount.appendChild(scoreboard.node);
+    mount.appendChild(content);
+
+    function kick(player, button) {
+      if (!global.confirm('Kick ' + player.name + ' out of the game?')) { return; }
+      button.disabled = true;
+      // The next poll redraws without them.
+      fetch('/party/host/kick', { method: 'POST', body: new URLSearchParams({ playerId: player.id }) })
+        .catch(function () { /* re-enabled below, so it can be tapped again */ })
+        .then(function () { button.disabled = false; });
+    }
+
+    function send(path, body) {
+      pending[path] = true;
+      update();
+      fetch('/api/room/' + code + '/party/' + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+        .then(function (response) { return response.json(); })
+        .then(function (next) { if (next && next.party) { render(next); } })
+        .catch(function () { /* re-enabled below, so it can be tapped again */ })
+        .then(function () {
+          delete pending[path];
+          update();
+        });
+    }
+
+    function update() {
+      updaters.forEach(function (apply) { apply(latest.party); });
+    }
+
+    function blocked(path) {
+      return !!pending[path] || Date.now() < settlingUntil;
+    }
+
+    function headline(party) {
+      if (party.stage === 'lobby') {
+        if (!party.players.length) { return 'Waiting for players to join...'; }
+        return latest.canStart ? 'Ready when the host starts the game.' : 'Waiting for more players...';
+      }
+      if (party.stage === 'finished') {
+        return party.winners.length === 1
+          ? party.winners[0] + ' wins!'
+          : "It's a tie: " + party.winners.join(', ');
+      }
+      if (party.stage === 'picking') {
+        return party.yourPick ? 'Your turn to pick a theme' : party.picker + ' is picking a theme...';
+      }
+      return party.theme;
+    }
+
+    function addThemes(party) {
+      if (!party.themes.length) {
+        content.appendChild(el('p', 'error', 'No themes available. Ask the host to add one.'));
+      }
+      party.themes.forEach(function (theme) {
+        var button = el('button', 'answer', theme.name);
+        button.type = 'button';
+        button.addEventListener('click', function () {
+          send('pick', { version: latest.version, theme: theme.id });
+        });
+        updaters.push(function () { button.disabled = blocked('pick'); });
+        content.appendChild(button);
+      });
+    }
+
+    function addQuestion(party, canAnswer) {
+      var card = el('fieldset');
+      card.appendChild(el('p', 'question-text', party.question.question));
+
+      party.question.answers.forEach(function (answer) {
+        if (!canAnswer) {
+          card.appendChild(el('div', 'answer readonly', answer));
+          return;
+        }
+        var button = el('button', 'answer', answer);
+        button.type = 'button';
+        button.addEventListener('click', function () {
+          send('answer', { version: latest.version, answer: answer });
+        });
+        updaters.push(function (current) {
+          if (!current.question) { return; }
+          var chosen = current.question.yourAnswer;
+          button.disabled = chosen !== null || blocked('answer');
+          button.classList.toggle('picked', chosen === answer);
+        });
+        card.appendChild(button);
+      });
+      content.appendChild(card);
+
+      var waiting = el('p', 'question-meta');
+      updaters.push(function (current) {
+        if (!current.question) { return; }
+        var names = current.players
+          .filter(function (player) { return !player.answered; })
+          .map(function (player) { return player.you ? 'you' : player.name; });
+        waiting.textContent = names.length ? 'Waiting for ' + names.join(', ') : '';
+      });
+      content.appendChild(waiting);
+    }
+
+    // Symbol and word as well as color, for anyone who can't tell red from green.
+    function addResults(party) {
+      var you = party.players.filter(function (player) { return player.you; })[0];
+      if (you) {
+        content.appendChild(el('div', 'result-banner ' + (you.correct ? 'right' : 'wrong'),
+          you.correct ? '\u2713 YOU GOT IT RIGHT'
+            : (you.answered ? '\u2717 YOU GOT IT WRONG' : '\u2717 OUT OF TIME')));
+      }
+
+      var grid = el('div', 'results' + (isHost ? ' on-host' : ''));
+      var ordered = party.players.slice().sort(function (a, b) {
+        return Number(b.picker) - Number(a.picker); // The picker first, then join order.
+      });
+      ordered.forEach(function (player, index) {
+        var tile = el('div', 'result-tile ' + (player.correct ? 'right' : 'wrong'));
+        tile.style.animationDelay = index * RESULT_STAGGER_MS + 'ms';
+        tile.appendChild(el('span', 'result-mark', player.correct ? '\u2713' : '\u2717'));
+        tile.appendChild(el('span', 'result-name', player.name + (player.you ? ' (you)' : '')));
+        tile.appendChild(el('span', 'result-word', (player.correct ? 'RIGHT' : (player.answered ? 'WRONG' : 'NO ANSWER')) +
+          (player.picker ? ' ' + points(party.reveal.points) : '')));
+        grid.appendChild(tile);
+      });
+      content.appendChild(grid);
+    }
+
+    function addReveal(party, canAnswer) {
+      var item = party.reveal;
+      addResults(party);
+      var card = el('fieldset');
+      card.appendChild(el('p', 'question-text', item.question));
+      card.appendChild(el('p', 'reveal-answer', 'Answer: ' + item.correctAnswer));
+      if (canAnswer && item.yourAnswer !== item.correctAnswer) {
+        card.appendChild(el('p', 'your-answer',
+          item.yourAnswer === null ? "You didn't answer in time" : 'You answered: ' + item.yourAnswer));
+      }
+      card.appendChild(el('p', null, item.explanation));
+
+      var parts = [];
+      if (item.bonus) {
+        parts.push(points(item.bonus) + ' correct');
+      } else if (item.pickerCorrect) {
+        parts.push('correct, but no bonus without a second correct answer');
+      } else {
+        parts.push('not correct');
+      }
+      if (item.penalty) {
+        parts.push('-' + item.penalty + ' for ' + item.othersCorrect +
+          (item.othersCorrect === 1 ? ' other' : ' others') + ' correct');
+      }
+      card.appendChild(el('p', 'turn-total',
+        party.picker + ': ' + points(item.points) + ' (' + parts.join(', ') + ')'));
+      content.appendChild(card);
+
+      if (!canAnswer) { return; }
+      var next = el('button', 'next',
+        party.nextPicker === null ? 'See final scores' : 'Next: ' + party.nextPicker + "'s turn");
+      // Left without type="button", which the stylesheet draws as secondary. It isn't in a form.
+      next.addEventListener('click', function () { send('next', { version: latest.version }); });
+      updaters.push(function () { next.disabled = blocked('next'); });
+      content.appendChild(next);
+    }
+
+    function build(party, canAnswer) {
+      updaters = [];
+      content.textContent = '';
+      content.appendChild(el('h2', 'room-status', headline(party)));
+
+      if (party.stage !== 'lobby' && party.stage !== 'finished') {
+        content.appendChild(el('p', 'question-meta',
+          'Round ' + party.round + ' of ' + party.rounds + ' (' + party.difficulty + '). ' +
+          (party.yourPick ? 'Your turn' : party.picker + "'s turn") +
+          (party.bonusNeedsSecond ? '. Bonus needs a second correct answer.' : '.')));
+      }
+      if (latest.notice) { content.appendChild(el('p', 'error', latest.notice)); }
+
+      if (party.themes) { addThemes(party); }
+      if (party.question) { addQuestion(party, canAnswer); }
+      if (party.reveal) { addReveal(party, canAnswer); }
+    }
+
+    function render(state) {
+      // A poll sent before a tap can land after that tap's response; don't go backwards.
+      if (latest && state.version < latest.version) { return; }
+      latest = state;
+      var party = state.party;
+
+      if (party.removed && !isHost) {
+        global.location.replace('/j/' + code); // The join page says why.
+        return;
+      }
+
+      var picker = party.players.filter(function (player) { return player.picker; })[0];
+      var nextTurnKey = [party.stage, party.round, picker ? picker.id : ''].join(':');
+      var canAnswer = party.players.some(function (player) { return player.you; });
+      var nextScreenKey = JSON.stringify([
+        nextTurnKey,
+        canAnswer,
+        party.players.length > 0,
+        party.themes,
+        party.nextPicker,
+        party.winners,
+        party.reveal,
+        // The result tiles, which change if someone is kicked or leaves during the reveal.
+        party.reveal && party.players.map(function (player) { return [player.id, player.correct]; }),
+        state.notice,
+        state.canStart,
+        // Distinguishes a restarted game, whose question differs at the same stage and turn.
+        party.question && [party.question.question, party.question.answers]
+      ]);
+
+      scoreboard.update(party);
+      clock.update(party, nextTurnKey);
+
+      if (nextScreenKey !== screenKey) {
+        if (turnKey !== null && nextTurnKey !== turnKey) {
+          // The new screen's buttons land where the old ones were, and Next acts for everyone, so
+          // the second half of a double tap must not press one.
+          settlingUntil = Date.now() + SETTLE_MS;
+          setTimeout(update, SETTLE_MS + 20);
+          // The host page has its own content above the board, so only move players' screens.
+          if (state.you && !isHost) { global.scrollTo(0, 0); }
+        }
+        build(party, canAnswer);
+        screenKey = nextScreenKey;
+        turnKey = nextTurnKey;
+      }
+      update();
+
+      var yourPick = party.stage === 'picking' && party.yourPick;
+      if (yourPick && !wasYourPick && global.navigator && global.navigator.vibrate) {
+        global.navigator.vibrate(200);
+      }
+      wasYourPick = yourPick;
+    }
+
+    return { render: render };
+  }
+
+  /*
+   * The countdown. The server sends the time left, and this counts down smoothly between polls. The
+   * server only ever shortens a question's time, so the earliest estimate is kept: that stops
+   * network jitter making the number flick back up.
+   */
+  function createClock() {
+    var node = el('div', 'countdown');
+    var track = el('span', 'countdown-track');
+    var fill = el('span', 'countdown-fill');
+    var label = el('strong', 'countdown-label');
+    var key = null;
+    var endsAt = null;
+    var allowed = 0;
+    var ticker = null;
+    track.appendChild(fill);
+    node.appendChild(track);
+    node.appendChild(label);
+    node.hidden = true;
+
+    function draw() {
+      var left = Math.max(0, endsAt - Date.now());
+      fill.style.width = Math.min(100, left / allowed * 100) + '%';
+      label.textContent = Math.ceil(left / 1000) + 's';
+      node.classList.toggle('urgent', left <= URGENT_MS);
+    }
+
+    function update(party, turnKey) {
+      if (party.stage !== 'answering' || party.millisLeft === null) {
+        clearInterval(ticker);
+        ticker = null;
+        key = null;
+        node.hidden = true;
+        return;
+      }
+      var nextKey = turnKey + party.question.question;
+      var estimate = Date.now() + party.millisLeft;
+      endsAt = key === nextKey ? Math.min(endsAt, estimate) : estimate;
+      key = nextKey;
+      allowed = party.millisAllowed;
+      node.hidden = false;
+      if (!ticker) { ticker = setInterval(draw, CLOCK_TICK_MS); }
+      draw();
+    }
+
+    return { node: node, update: update };
+  }
+
+  /*
+   * One bar per player, highest first, growing left or right of a shared zero line. Rows keep their
+   * DOM order and are moved with a transform, so re-sorting slides rather than jumps. onKick is
+   * only given on the host page.
+   */
+  function createScoreboard(onKick) {
+    var node = el('div', 'scoreboard');
+    var list = el('div', 'score-rows');
+    var rows = new Map();
+    node.setAttribute('aria-label', 'Scores');
+    node.appendChild(list);
+
+    function addRow(player) {
+      var row = {
+        node: el('div', 'score-row'),
+        name: el('span', 'score-name'),
+        bar: el('span', 'score-bar'),
+        zero: el('span', 'score-zero'),
+        value: el('span', 'score-value'),
+        result: el('span', 'score-result'),
+        kick: null
+      };
+      var track = el('span', 'score-track');
+      track.appendChild(row.bar);
+      track.appendChild(row.zero);
+      [row.name, track, row.value, row.result].forEach(function (part) { row.node.appendChild(part); });
+      if (onKick) {
+        row.kick = el('button', 'kick', 'Kick');
+        row.kick.type = 'button';
+        row.kick.addEventListener('click', function () { onKick(player, row.kick); });
+        row.node.appendChild(row.kick);
+      }
+      list.appendChild(row.node);
+      rows.set(player.id, row);
+      return row;
+    }
+
+    function update(party) {
+      var players = party.players;
+      node.hidden = !players.length;
+
+      rows.forEach(function (row, id) {
+        if (!players.some(function (player) { return player.id === id; })) {
+          list.removeChild(row.node);
+          rows.delete(id);
+        }
+      });
+
+      var scores = players.map(function (player) { return player.score; });
+      var low = Math.min.apply(null, [0].concat(scores));
+      var high = Math.max.apply(null, [0].concat(scores));
+      var span = Math.max(high - low, MIN_SCALE);
+      function percent(value) { return (value - low) / span * 100 + '%'; }
+
+      var ranked = players.slice().sort(function (a, b) { return b.score - a.score; });
+      list.style.height = ranked.length * ROW_PX + 'px';
+      ranked.forEach(function (player, rank) {
+        var row = rows.get(player.id) || addRow(player);
+
+        row.node.style.transform = 'translateY(' + rank * ROW_PX + 'px)';
+        row.node.classList.toggle('current', player.picker);
+        row.node.title = player.name + ': ' + player.score + ' points';
+        row.name.textContent = (player.picker ? '▶ ' : '') +
+          (party.stage === 'answering' && player.answered ? '✓ ' : '') +
+          player.name + (player.you ? ' (you)' : '');
+        row.value.textContent = player.score;
+        row.result.textContent = player.correct === null ? '' : (player.correct ? '\u2713' : '\u2717');
+        row.node.classList.toggle('right', player.correct === true);
+        row.node.classList.toggle('wrong', player.correct === false);
+        row.zero.style.left = percent(0);
+        row.bar.style.left = percent(Math.min(0, player.score));
+        row.bar.style.width = Math.abs(player.score) / span * 100 + '%';
+        row.bar.classList.toggle('negative', player.score < 0);
+        if (row.kick) { row.kick.hidden = party.stage === 'finished'; }
+      });
+    }
+
+    return { node: node, update: update };
   }
 
   function startRoom(options) {
@@ -26,6 +428,8 @@
     var wasYourTurn = false;
     var stopped = false;
     var timer = null;
+    var partyBoard = null;
+    var pollMs = POLL_MS;
 
     function stop(message) {
       stopped = true;
@@ -36,7 +440,7 @@
 
     function schedule() {
       if (stopped) { return; }
-      timer = setTimeout(poll, POLL_MS);
+      timer = setTimeout(poll, pollMs);
     }
 
     function poll() {
@@ -149,6 +553,13 @@
     }
 
     function render(state) {
+      if (state.party) {
+        // Through the whole timed game, so a new question doesn't reach some phones a second late.
+        pollMs = state.party.timeLimit && state.phase === 'playing' ? TIMED_POLL_MS : POLL_MS;
+        partyBoard = partyBoard || createPartyBoard(code, mount, !!options.host);
+        partyBoard.render(state);
+        return;
+      }
       if (state.version === drawnVersion) { return; }
       drawnVersion = state.version;
 

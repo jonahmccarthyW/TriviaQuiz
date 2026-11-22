@@ -1,0 +1,94 @@
+{{> header}}
+
+<h1>{{title}}</h1>
+
+<div class="join-card">
+  <p>On each phone, open a browser and go to:</p>
+  {{#joinUrls}}
+    <p class="join-url">{{.}}</p>
+  {{/joinUrls}}
+  {{^joinUrls}}
+    <p class="error">Couldn't work out this machine's network address. Check you're on Wi-Fi.</p>
+  {{/joinUrls}}
+  <p class="join-hint">Everyone must be on the same Wi-Fi. Room code <strong>{{code}}</strong>.</p>
+</div>
+
+<div id="room"></div>
+
+{{! One form on purpose: refresh, reset used and start all send the checkboxes. autocomplete="off" stops the
+    browser restoring a checkbox state the server doesn't have. }}
+<form method="post" action="/party/host/start" autocomplete="off">
+  {{! Enter presses a form's first submit button, so that mustn't be a Remove. }}
+  <button type="submit" formaction="/party/host/refresh" style="display: none"></button>
+  <fieldset>
+    <legend>Game settings</legend>
+    <label>
+      <input type="checkbox" name="bonusNeedsSecond" value="true"{{#bonusNeedsSecond}} checked{{/bonusNeedsSecond}}{{^inLobby}} disabled{{/inLobby}}>
+      Bonus needs a second correct answer
+    </label>
+    <label>
+      <input type="checkbox" name="timeLimit" value="true"{{#timeLimit}} checked{{/timeLimit}}{{^inLobby}} disabled{{/inLobby}}>
+      Time limit: {{secondsPerPlayer}} seconds per player. Each answer takes {{secondsPerAnswer}} seconds off, down to {{secondsFloor}}
+    </label>
+    {{^inLobby}}
+      <p class="question-meta">Locked for this game. Choose &ldquo;Play again&rdquo; to change these.</p>
+    {{/inLobby}}
+  </fieldset>
+
+  <fieldset>
+    <legend>Themes</legend>
+    {{^themes}}
+      <p>No themes yet. Add JSON files to the <code>themes/</code> folder, then refresh.</p>
+    {{/themes}}
+    <ul>
+      {{#themes}}
+        <li>
+          {{name}} <small>({{used}} of {{total}} used)</small>
+          {{#onHostComputer}}
+            <button type="submit" class="secondary small" formaction="/party/host/remove-theme"
+              name="theme" value="{{id}}" data-label="{{name}}"
+              onclick="return confirm('Remove ' + this.dataset.label + '? The file moves to themes/removed.')">Remove</button>
+          {{/onHostComputer}}
+        </li>
+      {{/themes}}
+    </ul>
+    {{#themeErrors}}
+      <p class="error">
+        Skipped {{file}}: {{reason}}
+        {{#onHostComputer}}
+          <button type="submit" class="secondary small" formaction="/party/host/remove-theme"
+            name="theme" value="{{file}}" data-label="{{file}}"
+            onclick="return confirm('Remove ' + this.dataset.label + '? The file moves to themes/removed.')">Remove</button>
+        {{/onHostComputer}}
+      </p>
+    {{/themeErrors}}
+    <p class="question-meta">{{rounds}} rounds. Each player picks a theme for one question per round.</p>
+    <button type="submit" class="secondary" formaction="/party/host/refresh">Refresh themes</button>
+    {{#onHostComputer}}
+      <button type="submit" class="secondary" formaction="/party/host/reset-used"
+        onclick="return confirm('Mark every question in every theme as unused?')">Reset used questions</button>
+    {{/onHostComputer}}
+  </fieldset>
+
+  {{#inLobby}}
+    <button type="submit">Start game</button>
+  {{/inLobby}}
+</form>
+
+<div class="host-actions">
+  <form method="post" action="/party/host/reset">
+    <button type="submit" class="secondary">Play again (keep players)</button>
+  </form>
+  <form method="post" action="/party/host/close">
+    <button type="submit" class="secondary">Close room</button>
+  </form>
+</div>
+
+<p><a href="/">Back to home</a></p>
+
+<script src="/js/room.js?v=4"></script>
+<script>
+  startRoom({ code: '{{code}}', mount: document.getElementById('room'), host: true });
+</script>
+
+{{> footer}}
