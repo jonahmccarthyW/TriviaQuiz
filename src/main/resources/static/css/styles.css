@@ -397,6 +397,7 @@ button.flag-toggle.active { color: #fff; background: var(--red); border-color: v
 /* On the host page. */
 li.theme-flagged { color: var(--red); }
 li.theme-hidden { color: var(--muted); }
+.hidden-tag[hidden], #hidden-count[hidden] { display: none; }
 .hidden-tag {
   margin-left: 6px;
   padding: 1px 8px;

@@ -61,15 +61,16 @@
       <p class="question-meta">Players flagged some themes as bad while picking. They're listed first: consider removing them.</p>
     {{/anyFlagged}}
     <p class="question-meta">Hide a theme to leave it out of this room's games without removing it.
-      {{#anyHidden}}<strong>{{hiddenCount}} hidden.</strong>{{/anyHidden}}</p>
+      <strong id="hidden-count"{{^anyHidden}} hidden{{/anyHidden}}>{{hiddenCount}} hidden.</strong></p>
     <ul>
       {{#themes}}
         <li class="{{#flagged}}theme-flagged{{/flagged}}{{#hidden}} theme-hidden{{/hidden}}">
           {{name}} <small>({{used}} of {{total}} used)</small>
-          {{#hidden}}<span class="hidden-tag">hidden</span>{{/hidden}}
+          <span class="hidden-tag"{{^hidden}} hidden{{/hidden}}>hidden</span>
           {{#flagged}}<span class="flag-count">&#x1F44E; flagged {{flags}} {{#flaggedOnce}}time{{/flaggedOnce}}{{^flaggedOnce}}times{{/flaggedOnce}}</span>{{/flagged}}
+          {{! data-hide-theme: the script below sends it without reloading. The formaction is the fallback. }}
           <button type="submit" class="secondary small" formaction="/party/host/hide-theme"
-            name="theme" value="{{id}}">{{#hidden}}Show{{/hidden}}{{^hidden}}Hide{{/hidden}}</button>
+            name="theme" value="{{id}}" data-hide-theme="{{id}}">{{#hidden}}Show{{/hidden}}{{^hidden}}Hide{{/hidden}}</button>
           {{#onHostComputer}}
             <button type="submit" class="secondary small" formaction="/party/host/remove-theme"
               name="theme" value="{{id}}" data-label="{{name}}"
@@ -116,6 +117,31 @@
 <script>
   startRoom({ code: '{{code}}', mount: document.getElementById('room'), host: true });
   startChat({ code: '{{code}}' });
+
+  // Hide and Show update the list in place, so the page doesn't reload and jump to the top.
+  document.addEventListener('click', function (event) {
+    var button = event.target.closest('button[data-hide-theme]');
+    if (!button) { return; }
+    event.preventDefault();
+    if (button.disabled) { return; }
+    button.disabled = true;
+    fetch('/party/host/theme-visibility', {
+      method: 'POST',
+      body: new URLSearchParams({ theme: button.dataset.hideTheme })
+    })
+      .then(function (response) { return response.ok ? response.json() : Promise.reject(response); })
+      .then(function (result) {
+        var item = button.closest('li');
+        item.classList.toggle('theme-hidden', result.hidden);
+        item.querySelector('.hidden-tag').hidden = !result.hidden;
+        button.textContent = result.hidden ? 'Show' : 'Hide';
+        var count = document.getElementById('hidden-count');
+        count.textContent = result.hiddenCount + ' hidden.';
+        count.hidden = result.hiddenCount === 0;
+      })
+      .catch(function () { alert("Couldn't change that theme. Try again, or refresh the page."); })
+      .then(function () { button.disabled = false; });
+  });
 </script>
 
 {{> footer}}

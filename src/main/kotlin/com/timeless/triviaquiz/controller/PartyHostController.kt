@@ -28,6 +28,7 @@ import org.springframework.ui.set
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.ResponseBody
 import java.net.InetAddress
 import java.time.Duration
 
@@ -48,6 +49,9 @@ data class ThemeSummary(
     val flagged: Boolean get() = flags > 0
     val flaggedOnce: Boolean get() = flags == 1
 }
+
+/** A theme's new state after Hide or Show, for the host page's script. */
+data class ThemeVisibility(val theme: String, val hidden: Boolean, val hiddenCount: Int)
 
 /** One option in a rounds dropdown. */
 data class RoundChoice(val count: Int, val selected: Boolean)
@@ -186,13 +190,33 @@ class PartyHostController(
         val room = hostedRoom(session) ?: return "redirect:/party/host"
         val known = withContext(Dispatchers.IO) { themeLoader.load().themes }.any { it.id == theme }
 
-        room.mutex.withLock {
-            saveSettings(room, bonusNeedsSecond, timeLimit, limitThemes, rounds)
-            // No version bump: the picker's next poll re-deals without it anyway, and a bump would
-            // make a pick they're sending right now fail its exact version match.
-            if (known && !room.hiddenThemes.remove(theme)) room.hiddenThemes.add(theme)
-        }
+        room.mutex.withLock { saveSettings(room, bonusNeedsSecond, timeLimit, limitThemes, rounds) }
+        if (known) toggle(room, theme)
         return "redirect:/party/host"
+    }
+
+    /**
+     * The same as [toggleHidden], for the host page's script: answers with the new state instead of
+     * reloading the page, so the host keeps their place in the theme list.
+     */
+    @PostMapping("/party/host/theme-visibility")
+    @ResponseBody
+    suspend fun toggleVisibility(@RequestParam theme: String, session: HttpSession): ResponseEntity<ThemeVisibility> {
+        val room = hostedRoom(session) ?: return ResponseEntity.notFound().build()
+        val themes = withContext(Dispatchers.IO) { themeLoader.load().themes }
+        if (themes.none { it.id == theme }) return ResponseEntity.notFound().build()
+
+        val hidden = toggle(room, theme)
+        return ResponseEntity.ok(ThemeVisibility(theme, hidden, themes.count { it.id in room.hiddenThemes }))
+    }
+
+    /**
+     * Hides or shows [theme] in [room], returning whether it's now hidden. No version bump: the
+     * picker's next poll re-deals without it anyway, and a bump would make a pick they're sending
+     * right now fail its exact version match.
+     */
+    private suspend fun toggle(room: GameRoom, theme: String): Boolean = room.mutex.withLock {
+        if (room.hiddenThemes.remove(theme)) false else room.hiddenThemes.add(theme)
     }
 
     /**

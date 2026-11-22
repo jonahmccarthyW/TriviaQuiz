@@ -269,7 +269,7 @@ class PartyFlowIntegrationTest {
             val room = Party(2, start = false)
             val ann = room.players[0]
             room.host.form("/party/host/hide-theme", "theme=test.json")
-            assertTrue("<strong>1 hidden.</strong>" in room.host.get("/party/host").body())
+            assertTrue("<strong id=\"hidden-count\">1 hidden.</strong>" in room.host.get("/party/host").body())
 
             room.host.form("/party/host/start", "limitThemes=true")
             assertEquals(listOf("other.json"), room.party(ann).path("themes").map { it.path("id").asText() })
@@ -281,6 +281,23 @@ class PartyFlowIntegrationTest {
         } finally {
             Files.deleteIfExists(other)
         }
+    }
+
+    @Test
+    fun `the host page's script can hide and show a theme without a reload`() {
+        val room = Party(2, start = false)
+
+        val hidden = mapper.readTree(room.host.form("/party/host/theme-visibility", "theme=test.json").body())
+        assertEquals(true, hidden.path("hidden").asBoolean())
+        assertEquals(1, hidden.path("hiddenCount").asInt())
+
+        val shown = mapper.readTree(room.host.form("/party/host/theme-visibility", "theme=test.json").body())
+        assertEquals(false, shown.path("hidden").asBoolean())
+        assertEquals(0, shown.path("hiddenCount").asInt())
+
+        assertEquals(404, room.host.form("/party/host/theme-visibility", "theme=../test.json").statusCode())
+        assertEquals(404, room.players[0].form("/party/host/theme-visibility", "theme=test.json").statusCode(),
+            "only the room's host")
     }
 
     @Test
