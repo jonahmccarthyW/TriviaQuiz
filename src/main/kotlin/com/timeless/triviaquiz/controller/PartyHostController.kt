@@ -36,7 +36,15 @@ import java.time.Duration
  * [flags] is how many times pickers marked it as bad; [flagged] is for the template, as JMustache
  * treats 0 as true.
  */
-data class ThemeSummary(val id: String, val name: String, val used: Int, val total: Int, val flags: Int = 0) {
+data class ThemeSummary(
+    val id: String,
+    val name: String,
+    val used: Int,
+    val total: Int,
+    val flags: Int = 0,
+    /** Hidden by the host for this room: not offered to pickers. */
+    val hidden: Boolean = false
+) {
     val flagged: Boolean get() = flags > 0
     val flaggedOnce: Boolean get() = flags == 1
 }
@@ -88,8 +96,11 @@ class PartyHostController(
         model["difficultySettings"] = difficultySettings(room.roundCounts)
         // Most flagged first, so the ones to consider removing are at the top.
         model["themes"] = catalog.themes
-            .map { ThemeSummary(it.id, it.name, it.usedCount, it.questions.size, it.flags) }
+            .map { ThemeSummary(it.id, it.name, it.usedCount, it.questions.size, it.flags, it.id in room.hiddenThemes) }
             .sortedByDescending { it.flags }
+        val hiddenCount = catalog.themes.count { it.id in room.hiddenThemes }
+        model["hiddenCount"] = hiddenCount
+        model["anyHidden"] = hiddenCount > 0
         model["anyFlagged"] = catalog.themes.any { it.flags > 0 }
         model["themeErrors"] = catalog.errors
         model["onHostComputer"] = isHostComputer(request)
@@ -157,6 +168,32 @@ class PartyHostController(
     }
 
     /**
+     * Hides a theme from this room's pickers, or shows it again. The file isn't touched, so unlike
+     * Remove any host may do it, and mid-game too. [theme] may come from a client: it is only
+     * matched against the loaded themes.
+     */
+    @PostMapping("/party/host/hide-theme")
+    suspend fun toggleHidden(
+        @RequestParam theme: String,
+        @RequestParam(defaultValue = "false") bonusNeedsSecond: Boolean,
+        @RequestParam(defaultValue = "false") timeLimit: Boolean,
+        @RequestParam(defaultValue = "false") limitThemes: Boolean,
+        @RequestParam(required = false) rounds: List<Int>?,
+        session: HttpSession
+    ): String {
+        val room = hostedRoom(session) ?: return "redirect:/party/host"
+        val known = withContext(Dispatchers.IO) { themeLoader.load().themes }.any { it.id == theme }
+
+        room.mutex.withLock {
+            saveSettings(room, bonusNeedsSecond, timeLimit, limitThemes, rounds)
+            // No version bump: the picker's next poll re-deals without it anyway, and a bump would
+            // make a pick they're sending right now fail its exact version match.
+            if (known && !room.hiddenThemes.remove(theme)) room.hiddenThemes.add(theme)
+        }
+        return "redirect:/party/host"
+    }
+
+    /**
      * Removes a player, in the lobby or mid-game. Called by room.js, so it doesn't redirect. Mid
      * question this can be what triggers the reveal, as nobody waits for a kicked player.
      */
@@ -178,7 +215,7 @@ class PartyHostController(
         session: HttpSession
     ): String {
         val room = hostedRoom(session) ?: return "redirect:/party/host"
-        val hasThemes = themeLoader.load().themes.isNotEmpty()
+        val hasThemes = themeLoader.load().themes.any { it.id !in room.hiddenThemes }
 
         room.mutex.withLock {
             if (room.phase != RoomPhase.LOBBY) return "redirect:/party/host"
@@ -188,7 +225,7 @@ class PartyHostController(
                 room.roundCounts.values.sum() == 0 -> "Choose at least one round to start."
                 room.lobby.size < GameRoomService.MIN_PLAYERS ->
                     "Need at least ${GameRoomService.MIN_PLAYERS} players to start."
-                !hasThemes -> "Need at least one valid theme to start."
+                !hasThemes -> "Need at least one valid theme that isn't hidden to start."
                 else -> null
             }
             if (room.notice == null) {

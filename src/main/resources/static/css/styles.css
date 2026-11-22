@@ -396,6 +396,16 @@ button.flag-toggle:hover { color: var(--red); background: var(--red-tint); borde
 button.flag-toggle.active { color: #fff; background: var(--red); border-color: var(--red); }
 /* On the host page. */
 li.theme-flagged { color: var(--red); }
+li.theme-hidden { color: var(--muted); }
+.hidden-tag {
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--border);
+  color: var(--navy-soft);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
 .flag-count {
   margin-left: 6px;
   padding: 1px 8px;

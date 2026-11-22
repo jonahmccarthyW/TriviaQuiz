@@ -262,6 +262,40 @@ class PartyFlowIntegrationTest {
     }
 
     @Test
+    fun `a hidden theme isn't offered or accepted, and can be shown again`() {
+        val other = themesDir.resolve("other.json")
+        other.writeText(themesDir.resolve("test.json").readText())
+        try {
+            val room = Party(2, start = false)
+            val ann = room.players[0]
+            room.host.form("/party/host/hide-theme", "theme=test.json")
+            assertTrue("<strong>1 hidden.</strong>" in room.host.get("/party/host").body())
+
+            room.host.form("/party/host/start", "limitThemes=true")
+            assertEquals(listOf("other.json"), room.party(ann).path("themes").map { it.path("id").asText() })
+            assertEquals(409, room.pick(ann), "test.json is hidden")
+
+            room.host.form("/party/host/hide-theme", "theme=test.json") // Mid-game, shown again.
+            assertTrue("test.json" in room.party(ann).path("themes").map { it.path("id").asText() })
+            assertEquals(200, room.pick(ann))
+        } finally {
+            Files.deleteIfExists(other)
+        }
+    }
+
+    @Test
+    fun `a game can't start with every theme hidden`() {
+        val room = Party(2, start = false)
+        room.host.form("/party/host/hide-theme", "theme=test.json")
+
+        room.host.form("/party/host/start")
+
+        assertEquals("lobby", room.party().path("stage").asText())
+        // The notice reaches the screen through the polled state, which room.js draws.
+        assertTrue("isn't hidden" in room.host.state(room.code).path("notice").asText())
+    }
+
+    @Test
     fun `the theme limit is on by default and enforced by the server`() {
         val ids = (1..THEMES_OFFERED + 2).map { "limit$it.json" } // More than are offered.
         ids.forEach { themesDir.resolve(it).writeText(themesDir.resolve("test.json").readText()) }

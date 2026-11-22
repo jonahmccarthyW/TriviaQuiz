@@ -161,7 +161,7 @@ class RoomApiController(
         val room = gameRoomService.find(code) ?: return ResponseEntity.notFound().build()
         val viewerId = viewerId(session, room)
         // Matched against the folder listing, so the client's value is never used as a path.
-        val theme = loadThemes().firstOrNull { it.id == body.theme }
+        val theme = loadThemes(room).firstOrNull { it.id == body.theme }
 
         val accepted = room.mutex.withLock {
             val game = room.party
@@ -238,7 +238,7 @@ class RoomApiController(
         val room = gameRoomService.find(code) ?: return ResponseEntity.notFound().build()
         val viewerId = viewerId(session, room)
         // Matched against the folder listing, so the client's value is never used as a path.
-        val themes = loadThemes()
+        val themes = loadThemes(room)
         val theme = themes.firstOrNull { it.id == body.theme }
 
         val accepted = room.mutex.withLock {
@@ -278,14 +278,19 @@ class RoomApiController(
             }
         }
         timedOut?.let { markQuestionUsed(room, it, themeLoader) }
-        val themes = loadThemes()
+        val themes = loadThemes(room)
         return room.mutex.withLock { buildPartyState(room, viewerId, themes) }
     }
 
     private fun buildPartyState(room: GameRoom, viewerId: String?, themes: List<Theme>): RoomStateView =
         buildView(room, viewerId).copy(party = buildPartyView(room, viewerId, themes, Instant.now()))
 
-    private suspend fun loadThemes(): List<Theme> = withContext(Dispatchers.IO) { themeLoader.load().themes }
+    /**
+     * The themes this room may use: all valid ones but those the host has hidden. Hiding one that's
+     * on offer swaps it out of the picker's deal, like a removed theme.
+     */
+    private suspend fun loadThemes(room: GameRoom): List<Theme> =
+        withContext(Dispatchers.IO) { themeLoader.load().themes }.filter { it.id !in room.hiddenThemes }
 
     /**
      * Expires stale feedback, deals the next question if one is needed, then builds the view.

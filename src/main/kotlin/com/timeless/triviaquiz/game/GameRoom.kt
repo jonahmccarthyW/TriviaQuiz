@@ -94,6 +94,12 @@ class GameRoom(val code: String, val mode: RoomMode = RoomMode.CLASSIC) {
     // only once however many times it's offered to them.
     private val themeFlags: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    /**
+     * Theme ids the host has hidden: never offered or accepted in this room, though their files are
+     * untouched. Kept through "Play again"; concurrent as pickers' polls read it outside [mutex].
+     */
+    val hiddenThemes: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
     /** Records a player's bad-theme flag. False if they had already flagged it. */
     fun flagTheme(playerId: String, themeId: String): Boolean = themeFlags.add("$playerId|$themeId")
 

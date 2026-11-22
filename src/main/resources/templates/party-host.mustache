@@ -60,11 +60,16 @@
     {{#anyFlagged}}
       <p class="question-meta">Players flagged some themes as bad while picking. They're listed first: consider removing them.</p>
     {{/anyFlagged}}
+    <p class="question-meta">Hide a theme to leave it out of this room's games without removing it.
+      {{#anyHidden}}<strong>{{hiddenCount}} hidden.</strong>{{/anyHidden}}</p>
     <ul>
       {{#themes}}
-        <li{{#flagged}} class="theme-flagged"{{/flagged}}>
+        <li class="{{#flagged}}theme-flagged{{/flagged}}{{#hidden}} theme-hidden{{/hidden}}">
           {{name}} <small>({{used}} of {{total}} used)</small>
+          {{#hidden}}<span class="hidden-tag">hidden</span>{{/hidden}}
           {{#flagged}}<span class="flag-count">&#x1F44E; flagged {{flags}} {{#flaggedOnce}}time{{/flaggedOnce}}{{^flaggedOnce}}times{{/flaggedOnce}}</span>{{/flagged}}
+          <button type="submit" class="secondary small" formaction="/party/host/hide-theme"
+            name="theme" value="{{id}}">{{#hidden}}Show{{/hidden}}{{^hidden}}Hide{{/hidden}}</button>
           {{#onHostComputer}}
             <button type="submit" class="secondary small" formaction="/party/host/remove-theme"
               name="theme" value="{{id}}" data-label="{{name}}"
