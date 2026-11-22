@@ -6,7 +6,12 @@ import com.timeless.triviaquiz.game.GameRoom
 import com.timeless.triviaquiz.game.PartyStage
 import com.timeless.triviaquiz.game.PartyTurn
 import com.timeless.triviaquiz.game.STREAK_LENGTH
+import com.timeless.triviaquiz.game.PENALTY_PER_OTHER_CORRECT
 import com.timeless.triviaquiz.game.STREAK_POINTS
+import com.timeless.triviaquiz.game.THEMES_FOR_LEADER
+import com.timeless.triviaquiz.game.THEMES_OFFERED
+import com.timeless.triviaquiz.game.THEMES_PER_PLACE
+import com.timeless.triviaquiz.game.TIEBREAK_POINTS
 import com.timeless.triviaquiz.game.Theme
 import java.time.Duration
 import java.time.Instant
@@ -31,7 +36,9 @@ data class PartyPlayerView(
     /** Correct answers in a row so far. */
     val streak: Int = 0,
     /** True only during the reveal, for those whose streak just earned its point. */
-    val streakBonus: Boolean = false
+    val streakBonus: Boolean = false,
+    /** In a tiebreak, whether this player is one of those tied, who alone may answer. */
+    val tiebreaker: Boolean = false
 )
 
 /** [flagged] is whether this viewer has marked it as a bad theme. The count is only on the host page. */
@@ -66,7 +73,28 @@ data class PartyRevealView(
     val firstCorrect: String?,
     val firstCorrectPoints: Int,
     val streakPoints: Int,
-    val streakLength: Int
+    val streakLength: Int,
+    /** What winning a tiebreak is worth. In a tiebreak, [firstCorrect] is the winner. */
+    val tiebreakPoints: Int
+)
+
+/**
+ * How scoring works, for the lobby screen. Sent rather than written into room.js so it can't drift
+ * from the real numbers. [limitThemes] and [bonusNeedsSecond] are the host's current choices, which
+ * can change until the game starts.
+ */
+data class PartyRulesView(
+    val guesserPoints: Int = GUESSER_POINTS,
+    val penaltyPerOtherCorrect: Int = PENALTY_PER_OTHER_CORRECT,
+    val firstCorrectPoints: Int = FIRST_CORRECT_POINTS,
+    val streakLength: Int = STREAK_LENGTH,
+    val streakPoints: Int = STREAK_POINTS,
+    val tiebreakPoints: Int = TIEBREAK_POINTS,
+    val themesForLeader: Int = THEMES_FOR_LEADER,
+    val themesPerPlace: Int = THEMES_PER_PLACE,
+    val themesOffered: Int = THEMES_OFFERED,
+    val limitThemes: Boolean,
+    val bonusNeedsSecond: Boolean
 )
 
 /** The Theme Party part of [RoomStateView], tailored to who is asking. */
@@ -101,7 +129,13 @@ data class PartyView(
     val themes: List<ThemeChoiceView>?,
     val question: PartyQuestionView?,
     val reveal: PartyRevealView?,
-    val winners: List<String>
+    val winners: List<String>,
+    /** True through a tiebreak: only those tied answer, and the first right wins. */
+    val tiebreak: Boolean = false,
+    /** Which tiebreak question this is, from 1. */
+    val tiebreakRound: Int = 0,
+    /** Only in the lobby. */
+    val rules: PartyRulesView? = null
 )
 
 /** Call with [GameRoom.mutex] held. The result shares no mutable state with the room. */
@@ -139,10 +173,12 @@ internal fun buildPartyView(room: GameRoom, viewerId: String?, themes: List<Them
             themes = null,
             question = null,
             reveal = null,
-            winners = emptyList()
+            winners = emptyList(),
+            rules = PartyRulesView(limitThemes = room.limitThemes, bonusNeedsSecond = room.bonusNeedsSecond)
         )
 
-    val picker = if (game.isOver) null else game.picker
+    // A tiebreak has no picker.
+    val picker = if (game.isOver || game.inTiebreak) null else game.picker
     val revealed = game.turn?.takeIf { game.stage == PartyStage.REVEAL }
     val firstId = revealed?.firstCorrectId
     val firstName = game.players.firstOrNull { it.playerId == firstId }?.name
@@ -160,10 +196,16 @@ internal fun buildPartyView(room: GameRoom, viewerId: String?, themes: List<Them
                 picker = it.playerId == picker?.playerId,
                 you = it.playerId == viewerId,
                 answered = game.hasAnswered(it.playerId),
-                correct = if (game.stage == PartyStage.REVEAL) game.turn?.isCorrect(it.playerId) else null,
+                // Those watching a tiebreak weren't asked, so are neither right nor wrong.
+                correct = if (game.stage == PartyStage.REVEAL && game.canAnswer(it.playerId)) {
+                    game.turn?.isCorrect(it.playerId)
+                } else {
+                    null
+                },
                 first = it.playerId == firstId,
                 streak = game.streakOf(it.playerId),
-                streakBonus = revealed?.streakBonusIds?.contains(it.playerId) == true
+                streakBonus = revealed?.streakBonusIds?.contains(it.playerId) == true,
+                tiebreaker = it.playerId in game.tiebreakers
             )
         },
         round = game.roundIndex + 1,
@@ -187,7 +229,9 @@ internal fun buildPartyView(room: GameRoom, viewerId: String?, themes: List<Them
         },
         question = asking?.takeIf { !flashing }?.questionView(viewerId),
         reveal = revealed?.revealView(viewerId, firstName),
-        winners = game.winners().map { it.name }
+        winners = game.winners().map { it.name },
+        tiebreak = game.inTiebreak,
+        tiebreakRound = game.tiebreakRound
     )
 }
 
@@ -212,6 +256,7 @@ private fun PartyTurn.revealView(viewerId: String?, firstName: String?): PartyRe
         firstCorrect = firstName,
         firstCorrectPoints = FIRST_CORRECT_POINTS,
         streakPoints = STREAK_POINTS,
-        streakLength = STREAK_LENGTH
+        streakLength = STREAK_LENGTH,
+        tiebreakPoints = TIEBREAK_POINTS
     )
 }

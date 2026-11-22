@@ -264,6 +264,9 @@ class RoomApiController(
      * Builds a party room's state. The time limit has no scheduler: the first poll after the clock
      * runs out causes the reveal. Polling never moves a game on from a reveal. The used flag and
      * the picker's theme list are both file work, so done outside the mutex.
+     *
+     * Likewise a tiebreak question has no scheduler: the first request that finds the game waiting
+     * for one deals it. That is usually the response to the Next that caused the wait.
      */
     private suspend fun readPartyState(room: GameRoom, viewerId: String?): RoomStateView {
         var timedOut: PartyTurn? = null
@@ -273,13 +276,20 @@ class RoomApiController(
             if (game?.expire(Instant.now()) == true) {
                 room.touch()
                 timedOut = game.turn
-            } else if (game?.canPick(viewerId) != true) {
+            } else if (game?.canPick(viewerId) != true && game?.stage != PartyStage.TIEBREAK) {
                 return buildPartyState(room, viewerId, emptyList())
             }
         }
         timedOut?.let { markQuestionUsed(room, it, themeLoader) }
         val themes = loadThemes(room)
-        return room.mutex.withLock { buildPartyState(room, viewerId, themes) }
+        return room.mutex.withLock {
+            // Checked again: another request may have dealt it while the themes loaded.
+            if (room.party?.dealTiebreak(themes, Instant.now()) == true) {
+                room.touch()
+                room.questionsOpenedVersion = room.version
+            }
+            buildPartyState(room, viewerId, themes)
+        }
     }
 
     private fun buildPartyState(room: GameRoom, viewerId: String?, themes: List<Theme>): RoomStateView =

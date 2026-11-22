@@ -204,8 +204,8 @@ class PartyFlowIntegrationTest {
         assertEquals("finished", room.party().path("stage").asText())
         // Both right every time: six picks of two less one, and six guesses of one. P0 always
         // answers first, so also gets the first-correct point all twelve turns. And twelve in a
-        // row is four streak points each.
-        assertEquals(listOf(12 + 12 + 4, 12 + 4), room.party().path("players").map { it.path("score").asInt() })
+        // row is a streak point each from the 3rd on: ten each.
+        assertEquals(listOf(12 + 12 + 10, 12 + 10), room.party().path("players").map { it.path("score").asInt() })
     }
 
     @Test

@@ -261,20 +261,22 @@ class ThemePartyGameTest {
     }
 
     @Test
-    fun `every third correct answer in a row earns a streak point`() {
+    fun `from three in a row on, each correct answer earns a streak point`() {
         val game = game("a", "b")
-        val a = mutableListOf<Int>()
+        val streak = mutableListOf<Int>()
+        val bonus = mutableListOf<Boolean>()
 
-        repeat(7) { turn ->
-            // b always answers first, so a never gets the first-correct point here.
+        repeat(8) { turn ->
             game.pickTheme(game.picker.playerId, theme())
             game.answer("b", "wrong")
-            game.answer("a", if (turn == 3) "wrong" else "right")
-            a += game.streakOf("a")
+            game.answer("a", if (turn == 4) "wrong" else "right")
+            streak += game.streakOf("a")
+            bonus += "a" in game.turn!!.streakBonusIds
             game.next("a")
         }
 
-        assertEquals(listOf(1, 2, 3, 0, 1, 2, 3), a)
+        assertEquals(listOf(1, 2, 3, 4, 0, 1, 2, 3), streak)
+        assertEquals(listOf(false, false, true, true, false, false, false, true), bonus)
         assertEquals(0, game.streakOf("b"))
     }
 
@@ -307,6 +309,98 @@ class ThemePartyGameTest {
         assertFalse(game.answer("b", "right", start.plusMillis(999)))
         assertEquals(start.plusSeconds(1).plus(TIME_PER_PLAYER.multipliedBy(2)), game.turn?.deadline)
         assertTrue(game.answer("b", "right", start.plusSeconds(1)))
+    }
+
+    /** One round of hard questions, with tiebreaks on. */
+    private fun tiebreakGame(vararg ids: String) = ThemePartyGame(
+        ids.map { PartyPlayer(it, it) }, false,
+        roundCounts = mapOf("easy" to 0, "medium" to 0, "hard" to 1), tiebreak = true
+    )
+
+    /** Picks, has everyone answer in [order] with only [correct] right, then moves on. */
+    private fun ThemePartyGame.turnWith(order: List<String>, vararg correct: String) {
+        assertTrue(pickTheme(picker.playerId, theme()))
+        order.forEach { answer(it, if (it in correct) "right" else "wrong") }
+        assertTrue(next(players.first().playerId))
+    }
+
+    /** a and b end level on 1 each, c behind on 0. */
+    private fun tiedAtTheEnd(): ThemePartyGame = tiebreakGame("a", "b", "c").apply {
+        turnWith(listOf("b", "a", "c"), "b") // a picks: a -1, b 1 + first 1.
+        turnWith(listOf("a", "b", "c"), "a") // b picks: b -1, a 1 + first 1.
+        turnWith(listOf("a", "b", "c")) // c picks, nobody right.
+    }
+
+    @Test
+    fun `a tie for the lead at the end goes to a tiebreak between only those tied`() {
+        val game = tiedAtTheEnd()
+        assertEquals(listOf(1, 1, 0), game.players.map { game.scoreOf(it.playerId) })
+        assertEquals(PartyStage.TIEBREAK, game.stage)
+        assertFalse(game.isOver)
+        assertEquals(listOf("a", "b"), game.tiebreakers)
+
+        // Only themes played this game are used: never.json wasn't.
+        assertTrue(game.dealTiebreak(listOf(theme().copy(id = "never.json"), theme())))
+        assertEquals("test.json", game.turn?.themeId)
+
+        assertFalse(game.answer("c", "right"), "c isn't tied, so can't answer")
+        assertTrue(game.answer("b", "wrong"))
+        assertEquals(PartyStage.ANSWERING, game.stage, "a wrong answer doesn't end it")
+        assertTrue(game.answer("a", "right"))
+
+        assertEquals(PartyStage.REVEAL, game.stage, "the first right answer wins at once")
+        assertEquals("a", game.turn?.firstCorrectId)
+        assertTrue(game.next("c"))
+        assertTrue(game.isOver)
+        assertEquals(listOf("a"), game.winners().map { it.playerId })
+        assertEquals(1 + TIEBREAK_POINTS, game.scoreOf("a"))
+    }
+
+    @Test
+    fun `if no tied player is right, another tiebreak question follows`() {
+        val game = tiedAtTheEnd()
+        game.dealTiebreak(listOf(theme()))
+
+        game.answer("a", "wrong")
+        game.answer("b", "wrong")
+
+        assertEquals(PartyStage.REVEAL, game.stage)
+        assertNull(game.turn?.firstCorrectId)
+        assertTrue(game.next("a"))
+        assertEquals(PartyStage.TIEBREAK, game.stage)
+        assertTrue(game.dealTiebreak(listOf(theme())))
+        assertEquals(2, game.tiebreakRound)
+        assertEquals(PartyStage.ANSWERING, game.stage)
+    }
+
+    @Test
+    fun `a tied player leaving hands the win to the other`() {
+        val game = tiedAtTheEnd()
+
+        game.remove("b")
+
+        assertTrue(game.isOver)
+        assertEquals(listOf("a"), game.winners().map { it.playerId })
+    }
+
+    @Test
+    fun `with no theme left the tie can't be broken and is shared`() {
+        val game = tiedAtTheEnd()
+
+        assertTrue(game.dealTiebreak(emptyList()))
+
+        assertTrue(game.isOver)
+        assertEquals(listOf("a", "b"), game.winners().map { it.playerId })
+    }
+
+    @Test
+    fun `a clear winner means no tiebreak`() {
+        val game = tiebreakGame("a", "b")
+        game.turnWith(listOf("a", "b"), "a")
+        game.turnWith(listOf("a", "b"))
+
+        assertTrue(game.isOver)
+        assertEquals(emptyList(), game.tiebreakers)
     }
 
     @Test

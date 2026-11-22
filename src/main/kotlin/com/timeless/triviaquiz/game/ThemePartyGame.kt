@@ -12,8 +12,11 @@ val TIME_CUT_PER_ANSWER: Duration = Duration.ofSeconds(2)
 /** Answers can't push the clock below this. From here it only counts down. */
 val TIME_CUT_FLOOR: Duration = Duration.ofSeconds(3)
 
-/** Where a Theme Party game is within the current turn. */
-enum class PartyStage { PICKING, ANSWERING, REVEAL, FINISHED }
+/**
+ * Where a Theme Party game is within the current turn. [TIEBREAK] is the moment between a tie at
+ * the end (or an unanswered tiebreak question) and the next tiebreak question being dealt.
+ */
+enum class PartyStage { PICKING, ANSWERING, REVEAL, TIEBREAK, FINISHED }
 
 data class PartyPlayer(val playerId: String, val name: String)
 
@@ -81,6 +84,12 @@ class PartyTurn(
  * [themeFlash] is how long only the theme name shows before the question does. Answers are refused
  * until then, so nobody gets a head start on the first-correct point. The app sets it from
  * `trivia.party.theme-flash-ms` (1 second); it defaults to none so tests can answer straight away.
+ *
+ * With [tiebreak], a tie for the lead after the last round goes to a tiebreak: only the tied
+ * players answer, one question at a time from a random theme played this game ([dealTiebreak]),
+ * and the first of them to answer correctly wins [TIEBREAK_POINTS]. A wrong answer is out for that
+ * question; if nobody is right, another is dealt. Off by default so tests that play a game to the
+ * end with level scores still finish; the app turns it on.
  */
 class ThemePartyGame(
     players: List<PartyPlayer>,
@@ -90,7 +99,8 @@ class ThemePartyGame(
     val limitThemes: Boolean = false,
     val themeFlash: Duration = Duration.ZERO,
     /** How long the answer stays up before [next] is allowed. Zero by default, for tests. */
-    val revealHold: Duration = Duration.ZERO
+    val revealHold: Duration = Duration.ZERO,
+    val tiebreak: Boolean = false
 ) {
 
     private val difficulties = roundDifficulties(roundCounts)
@@ -135,6 +145,18 @@ class ThemePartyGame(
     // This turn's choices, by id. Kept on the server, so reloading the page can't reshuffle them.
     private val offeredIds = mutableListOf<String>()
 
+    /** The players in the tiebreak, in seat order; empty outside one. */
+    var tiebreakers: List<String> = emptyList()
+        private set
+
+    /** How many tiebreak questions have been dealt. */
+    var tiebreakRound: Int = 0
+        private set
+
+    val inTiebreak: Boolean
+        get() = tiebreakers.isNotEmpty()
+
+    /** This turn's picker. Meaningless in a tiebreak, which has none. */
     val picker: PartyPlayer
         get() = seats[pickerIndex]
 
@@ -148,7 +170,7 @@ class ThemePartyGame(
     val nextPicker: PartyPlayer?
         get() {
             val lastTurn = roundIndex == difficulties.lastIndex && pickerIndex == seats.lastIndex
-            return if (isOver || lastTurn) null else seats[(pickerIndex + 1) % seats.size]
+            return if (isOver || lastTurn || inTiebreak) null else seats[(pickerIndex + 1) % seats.size]
         }
 
     fun scoreOf(playerId: String): Int = scores.getValue(playerId)
@@ -159,11 +181,37 @@ class ThemePartyGame(
 
     fun hasAnswered(playerId: String): Boolean = turn?.answerBy(playerId) != null
 
+    /** Whether [playerId] answers the current question: everyone, or in a tiebreak only those tied. */
+    fun canAnswer(playerId: String): Boolean =
+        if (inTiebreak) playerId in tiebreakers else isPlaying(playerId)
+
     /** Everyone sharing the highest score, or empty until the game is over. */
-    fun winners(): List<PartyPlayer> {
-        if (!isOver) return emptyList()
+    fun winners(): List<PartyPlayer> = if (isOver) leaders() else emptyList()
+
+    private fun leaders(): List<PartyPlayer> {
         val best = seats.maxOfOrNull { scoreOf(it.playerId) } ?: return emptyList()
         return seats.filter { scoreOf(it.playerId) == best }
+    }
+
+    /**
+     * Deals the next tiebreak question, from a random theme played this game (any of [themes] if
+     * none of those is left). With no theme at all the tie can't be broken, so the game ends shared.
+     * Returns whether anything changed. [themes] must be the room's full list.
+     */
+    fun dealTiebreak(themes: List<Theme>, now: Instant = Instant.now()): Boolean {
+        if (stage != PartyStage.TIEBREAK) return false
+        val pool = themes.filter { it.id in playedThemes }.ifEmpty { themes }
+        val theme = pool.randomOrNull()
+        val question = theme?.drawQuestion(difficulty, askedQuestions)
+        if (theme == null || question == null) {
+            finish()
+            return true
+        }
+        val timeAllowed = if (timeLimit) TIME_PER_PLAYER.multipliedBy(tiebreakers.size.toLong()) else null
+        turn = PartyTurn(theme.id, theme.name, question, timeAllowed, opensAt = now.plus(themeFlash))
+        tiebreakRound++
+        stage = PartyStage.ANSWERING
+        return true
     }
 
     /**
@@ -219,10 +267,11 @@ class ThemePartyGame(
     /** Records one answer, then either reveals, if it was the last, or cuts the clock. */
     fun answer(playerId: String, answer: String, now: Instant = Instant.now()): Boolean {
         val current = turn ?: return false
-        if (stage != PartyStage.ANSWERING || !isPlaying(playerId) || !current.isOpen(now)) return false
+        if (stage != PartyStage.ANSWERING || !canAnswer(playerId) || !current.isOpen(now)) return false
         if (timeIsUp(current, now) || !current.record(playerId, answer)) return false
 
-        revealIfAllAnswered(current, now)
+        // In a tiebreak the first right answer wins at once, without waiting for the others.
+        if (inTiebreak && current.isCorrect(playerId)) reveal(current, now) else revealIfAllAnswered(current, now)
         if (stage == PartyStage.ANSWERING) cutTime(current, now)
         return true
     }
@@ -244,6 +293,13 @@ class ThemePartyGame(
         if (stage != PartyStage.REVEAL || !isPlaying(playerId)) return false
         if (nextAllowedAt()?.let { now.isBefore(it) } == true) return false
 
+        if (inTiebreak) {
+            // A winner ends the game; otherwise wait for the next tiebreak question.
+            val won = turn?.firstCorrectId != null
+            turn = null
+            if (won) finish() else stage = PartyStage.TIEBREAK
+            return true
+        }
         turn = null
         pickerIndex++
         startTurn()
@@ -257,6 +313,17 @@ class ThemePartyGame(
     fun remove(playerId: String, now: Instant = Instant.now()): Boolean {
         val index = seats.indexOfFirst { it.playerId == playerId }
         if (isOver || index < 0) return false
+
+        if (inTiebreak) {
+            seats.removeAt(index)
+            tiebreakers = tiebreakers - playerId
+            when {
+                // One tied player left leads alone, so has won.
+                seats.size < 2 || tiebreakers.size < 2 -> finish()
+                stage == PartyStage.ANSWERING -> turn?.let { revealIfAllAnswered(it, now) }
+            }
+            return true
+        }
 
         val wasPicker = index == pickerIndex
         seats.removeAt(index)
@@ -276,7 +343,8 @@ class ThemePartyGame(
     private fun isPlaying(playerId: String): Boolean = seats.any { it.playerId == playerId }
 
     private fun revealIfAllAnswered(current: PartyTurn, now: Instant) {
-        if (seats.all { current.answerBy(it.playerId) != null }) reveal(current, now)
+        val answering = if (inTiebreak) tiebreakers else seats.map { it.playerId }
+        if (answering.all { current.answerBy(it) != null }) reveal(current, now)
     }
 
     private fun timeIsUp(current: PartyTurn, now: Instant): Boolean =
@@ -291,6 +359,7 @@ class ThemePartyGame(
     /** Anyone who hasn't answered by now counts as wrong. */
     private fun reveal(current: PartyTurn, now: Instant) {
         current.revealedAt = now
+        if (inTiebreak) return revealTiebreak(current)
         val pickerId = picker.playerId
         val correctIds = seats
             .map { it.playerId }
@@ -313,14 +382,24 @@ class ThemePartyGame(
         stage = PartyStage.REVEAL
     }
 
-    /** Every [STREAK_LENGTH]th correct answer in a row earns [STREAK_POINTS]. */
+    /** The first tied player to answer correctly wins; none of the usual scoring applies. */
+    private fun revealTiebreak(current: PartyTurn) {
+        current.score = QuestionScore(pickerCorrect = false, othersCorrect = 0, bonus = 0, penalty = 0)
+        current.deadline = null
+        current.firstCorrectId = current.firstCorrect(tiebreakers)
+        current.firstCorrectId?.let { scores[it] = scoreOf(it) + TIEBREAK_POINTS }
+        askedQuestions.add(current.question.question)
+        stage = PartyStage.REVEAL
+    }
+
+    /** Each correct answer that makes [STREAK_LENGTH] or more in a row earns [STREAK_POINTS]. */
     private fun updateStreaks(current: PartyTurn, correctIds: List<String>) {
         val earned = mutableSetOf<String>()
         seats.forEach { seat ->
             val id = seat.playerId
             val streak = if (id in correctIds) streakOf(id) + 1 else 0
             streaks[id] = streak
-            if (streak > 0 && streak % STREAK_LENGTH == 0) {
+            if (streak >= STREAK_LENGTH) {
                 scores[id] = scoreOf(id) + STREAK_POINTS
                 earned += id
             }
@@ -332,16 +411,27 @@ class ThemePartyGame(
     private fun startTurn() {
         offeredIds.clear()
         if (pickerIndex >= seats.size) {
-            if (roundIndex == difficulties.lastIndex) return finish()
+            if (roundIndex == difficulties.lastIndex) return endOrTiebreak()
             pickerIndex = 0
             roundIndex++
         }
         stage = PartyStage.PICKING
     }
 
+    /** After the last turn: a tie for the lead goes to a tiebreak, if they're on. */
+    private fun endOrTiebreak() {
+        val tied = leaders()
+        if (!tiebreak || tied.size < 2) return finish()
+        turn = null
+        pickerIndex = 0
+        tiebreakers = tied.map { it.playerId }
+        stage = PartyStage.TIEBREAK
+    }
+
     private fun finish() {
         turn = null
         pickerIndex = 0
+        tiebreakers = emptyList()
         stage = PartyStage.FINISHED
     }
 }

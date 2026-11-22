@@ -70,7 +70,9 @@ class PartyHostController(
     /** How long the theme name shows before each question. */
     @Value("\${trivia.party.theme-flash-ms:1000}") private val themeFlashMs: Long,
     /** How long the answer stays up before anyone can press Next. */
-    @Value("\${trivia.party.reveal-hold-ms:1500}") private val revealHoldMs: Long
+    @Value("\${trivia.party.reveal-hold-ms:1500}") private val revealHoldMs: Long,
+    /** Whether a tie for the lead at the end goes to a tiebreak. */
+    @Value("\${trivia.party.tiebreak:true}") private val tiebreak: Boolean
 ) {
 
     @GetMapping("/party/host")
@@ -236,7 +238,8 @@ class PartyHostController(
                     roundCounts = room.roundCounts,
                     limitThemes = room.limitThemes,
                     themeFlash = Duration.ofMillis(themeFlashMs.coerceAtLeast(0)),
-                    revealHold = Duration.ofMillis(revealHoldMs.coerceAtLeast(0))
+                    revealHold = Duration.ofMillis(revealHoldMs.coerceAtLeast(0)),
+                    tiebreak = tiebreak
                 )
             }
             room.touch()

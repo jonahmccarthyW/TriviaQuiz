@@ -46,6 +46,17 @@ class PartyViewsTest {
     }
 
     @Test
+    fun `the lobby sends the scoring guide with the host's current settings`() {
+        val room = GameRoom("ABCD", RoomMode.THEME_PARTY).apply { bonusNeedsSecond = true }
+
+        val rules = buildPartyView(room, null, emptyList(), start).rules
+
+        assertNotNull(rules)
+        assertEquals(true, rules.bonusNeedsSecond)
+        assertNull(buildPartyView(roomWithPick(), "b", emptyList(), start).rules, "only in the lobby")
+    }
+
+    @Test
     fun `after the flash the question is sent`() {
         val view = buildPartyView(roomWithPick(), "b", emptyList(), start.plusSeconds(1))
 

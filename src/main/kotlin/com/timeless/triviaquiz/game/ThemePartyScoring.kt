@@ -7,11 +7,14 @@ const val GUESSER_POINTS = 1
 const val FIRST_CORRECT_POINTS = 1
 
 /**
- * Kept small on purpose: every [STREAK_LENGTH]th correct answer in a row (3rd, 6th, ...) earns
- * [STREAK_POINTS], so a run is rewarded without running away with the game.
+ * Once a player has [STREAK_LENGTH] correct answers in a row, each correct answer (the 3rd, 4th,
+ * 5th, ...) earns [STREAK_POINTS] extra until they get one wrong.
  */
 const val STREAK_LENGTH = 3
 const val STREAK_POINTS = 1
+
+/** What winning the end-of-game tiebreaker is worth, which makes the winner the sole leader. */
+const val TIEBREAK_POINTS = 1
 
 /** What each other player's correct answer costs the picker. */
 const val PENALTY_PER_OTHER_CORRECT = 1

@@ -107,8 +107,15 @@
       if (party.stage === 'picking') {
         return party.yourPick ? 'Your turn to pick a theme' : party.picker + ' is picking a theme...';
       }
+      if (party.stage === 'tiebreak') { return "It's a tie! Tiebreaker..."; }
       if (party.stage === 'answering' && !party.question) { return 'Get ready...'; }
-      return party.theme;
+      return party.tiebreak ? 'Tiebreaker: ' + party.theme : party.theme;
+    }
+
+    function tiebreakerNames(party) {
+      return party.players
+        .filter(function (player) { return player.tiebreaker; })
+        .map(function (player) { return player.you ? 'you' : player.name; });
     }
 
     function ordinal(n) {
@@ -191,7 +198,8 @@
       updaters.push(function (current) {
         if (!current.question) { return; }
         var names = current.players
-          .filter(function (player) { return !player.answered; })
+          // In a tiebreak, only those tied are waited for.
+          .filter(function (player) { return !player.answered && (!current.tiebreak || player.tiebreaker); })
           .map(function (player) { return player.you ? 'you' : player.name; });
         waiting.textContent = names.length ? 'Waiting for ' + names.join(', ') : '';
       });
@@ -235,7 +243,63 @@
       content.appendChild(grid);
     }
 
-    function addReveal(party, canAnswer) {
+    // The lobby's short guide to scoring, so players know the rules while they wait.
+    function addRules(rules) {
+      var card = el('div', 'rules');
+      card.appendChild(el('h3', 'rules-title', 'How scoring works'));
+      var list = el('ul', 'rules-list');
+      var lines = [
+        ['Your pick, you’re right', '+1 per player in the game, ' + (-rules.penaltyPerOtherCorrect) +
+          ' for each other player also right' + (rules.bonusNeedsSecond ? ' (needs someone else right too)' : '')],
+        ['Your pick, you’re wrong', (-rules.penaltyPerOtherCorrect) + ' for each player who’s right'],
+        ['Someone else’s pick, you’re right', points(rules.guesserPoints)],
+        ['⚡ First right answer', points(rules.firstCorrectPoints) + ' extra'],
+        ['🔥 ' + rules.streakLength + '+ right in a row', points(rules.streakPoints) + ' extra for each one'],
+        ['⚔ Tie at the end', 'tiebreaker: first right answer wins']
+      ];
+      if (rules.limitThemes) {
+        lines.push(['In the lead?', 'fewer themes to pick from: ' + rules.themesForLeader + ' for 1st, ' +
+          Math.min(rules.themesForLeader + rules.themesPerPlace, rules.themesOffered) + ' for 2nd']);
+      }
+      lines.forEach(function (line) {
+        var item = el('li');
+        item.appendChild(el('span', 'rules-when', line[0]));
+        item.appendChild(el('span', 'rules-what', line[1]));
+        list.appendChild(item);
+      });
+      card.appendChild(list);
+      content.appendChild(card);
+    }
+
+    // A tiebreak question's reveal: who won, or that nobody did and another question follows.
+    function addTiebreakReveal(party, canAnswer, inGame) {
+      var item = party.reveal;
+      var winner = party.players.filter(function (player) { return player.first; })[0];
+      var text = winner
+        ? '🏆 ' + (winner.you ? 'YOU WIN' : winner.name.toUpperCase() + ' WINS') + ' THE TIEBREAKER ' +
+          points(item.tiebreakPoints)
+        : 'NOBODY GOT IT: ANOTHER QUESTION';
+      content.appendChild(el('div', 'result-banner ' + (winner ? 'right' : 'wrong'), text));
+
+      var card = el('fieldset');
+      card.appendChild(el('p', 'question-text', item.question));
+      card.appendChild(el('p', 'reveal-answer', 'Answer: ' + item.correctAnswer));
+      if (canAnswer && item.yourAnswer !== item.correctAnswer) {
+        card.appendChild(el('p', 'your-answer',
+          item.yourAnswer === null ? "You didn't answer" : 'You answered: ' + item.yourAnswer));
+      }
+      card.appendChild(el('p', null, item.explanation));
+      content.appendChild(card);
+
+      if (!inGame) { return; }
+      var next = el('button', 'next', winner ? 'See final scores' : 'Next tiebreaker question');
+      next.addEventListener('click', function () { send('next', { version: latest.version }); });
+      updaters.push(function () { next.disabled = blocked('next') || Date.now() < nextAt; });
+      content.appendChild(next);
+    }
+
+    function addReveal(party, canAnswer, inGame) {
+      if (party.tiebreak) { return addTiebreakReveal(party, canAnswer, inGame); }
       var item = party.reveal;
       addResults(party);
       var card = el('fieldset');
@@ -271,7 +335,7 @@
       });
       content.appendChild(card);
 
-      if (!canAnswer) { return; }
+      if (!inGame) { return; }
       var next = el('button', 'next',
         party.nextPicker === null ? 'See final scores' : 'Next: ' + party.nextPicker + "'s turn");
       // Left without type="button", which the stylesheet draws as secondary. It isn't in a form.
@@ -281,13 +345,17 @@
       content.appendChild(next);
     }
 
-    function build(party, canAnswer) {
+    function build(party, canAnswer, inGame) {
       updaters = [];
       if (!party.themes) { flagMode = false; } // A new screen never starts in flag mode.
       content.textContent = '';
       content.appendChild(el('h2', 'room-status', headline(party)));
 
-      if (party.stage !== 'lobby' && party.stage !== 'finished') {
+      if (party.tiebreak) {
+        var tied = tiebreakerNames(party);
+        content.appendChild(el('p', 'tiebreak-note', 'Tiebreaker between ' + tied.join(' and ') +
+          '. First to get it right wins.' + (canAnswer ? '' : " You're watching this one.")));
+      } else if (party.stage !== 'lobby' && party.stage !== 'finished') {
         content.appendChild(el('p', 'question-meta',
           'Round ' + party.round + ' of ' + party.rounds + ' (' + party.difficulty + '). ' +
           (party.yourPick ? 'Your turn' : party.picker + "'s turn") +
@@ -298,15 +366,18 @@
       // The theme flash: the server holds the question back for a moment after the pick.
       if (party.stage === 'answering' && !party.question) {
         var flash = el('div', 'theme-flash');
-        flash.appendChild(el('span', 'theme-flash-label', party.yourPick ? 'You picked' : party.picker + ' picked'));
+        flash.appendChild(el('span', 'theme-flash-label',
+          party.tiebreak ? 'Tiebreaker theme' : (party.yourPick ? 'You picked' : party.picker + ' picked')));
         flash.appendChild(el('strong', 'theme-flash-name', party.theme));
         content.appendChild(flash);
         return;
       }
 
+      // Players wait here for the host, so it's a good moment to explain the scoring.
+      if (party.stage === 'lobby' && party.rules && !isHost) { addRules(party.rules); }
       if (party.themes) { addThemes(party); }
       if (party.question) { addQuestion(party, canAnswer); }
-      if (party.reveal) { addReveal(party, canAnswer); }
+      if (party.reveal) { addReveal(party, canAnswer, inGame); }
     }
 
     function render(state) {
@@ -321,11 +392,15 @@
       }
 
       var picker = party.players.filter(function (player) { return player.picker; })[0];
-      var nextTurnKey = [party.stage, party.round, picker ? picker.id : ''].join(':');
-      var canAnswer = party.players.some(function (player) { return player.you; });
+      var nextTurnKey = [party.stage, party.round, picker ? picker.id : '', party.tiebreakRound].join(':');
+      var you = party.players.filter(function (player) { return player.you; })[0];
+      var inGame = !!you;
+      // In a tiebreak only those tied answer; everyone else in the game watches.
+      var canAnswer = inGame && (!party.tiebreak || you.tiebreaker);
       var nextScreenKey = JSON.stringify([
         nextTurnKey,
         canAnswer,
+        inGame,
         party.players.length > 0,
         party.themes,
         party.nextPicker,
@@ -335,6 +410,7 @@
         party.reveal && party.players.map(function (player) { return [player.id, player.correct]; }),
         state.notice,
         state.canStart,
+        party.rules, // The host may change a setting the guide mentions.
         // Distinguishes a restarted game, whose question differs at the same stage and turn.
         party.question && [party.question.question, party.question.answers]
       ]);
@@ -359,7 +435,7 @@
           // The host page has its own content above the board, so only move players' screens.
           if (state.you && !isHost) { global.scrollTo(0, 0); }
         }
-        build(party, canAnswer);
+        build(party, canAnswer, inGame);
         screenKey = nextScreenKey;
         turnKey = nextTurnKey;
       }
@@ -483,9 +559,9 @@
         var row = rows.get(player.id) || addRow(player);
 
         row.node.style.transform = 'translateY(' + rank * ROW_PX + 'px)';
-        row.node.classList.toggle('current', player.picker);
+        row.node.classList.toggle('current', player.picker || player.tiebreaker);
         row.node.title = player.name + ': ' + player.score + ' points';
-        row.name.textContent = (player.picker ? '▶ ' : '') +
+        row.name.textContent = (player.picker ? '▶ ' : '') + (player.tiebreaker ? '⚔ ' : '') +
           (party.stage === 'answering' && player.answered ? '✓ ' : '') +
           player.name + (player.you ? ' (you)' : '') +
           (player.streak >= 2 ? ' 🔥' + player.streak : '');
@@ -641,7 +717,7 @@
       if (state.party) {
         // Through the whole timed game, so a new question doesn't reach some phones a second late.
         // Also while someone is picking, so everyone catches the theme flash that follows.
-        var picking = state.party.stage === 'picking';
+        var picking = state.party.stage === 'picking' || state.party.stage === 'tiebreak';
         pollMs = (state.party.timeLimit && state.phase === 'playing') || picking ? TIMED_POLL_MS : POLL_MS;
         questionIn = state.party.millisUntilQuestion;
         partyBoard = partyBoard || createPartyBoard(code, mount, !!options.host);
