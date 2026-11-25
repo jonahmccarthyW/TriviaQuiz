@@ -449,6 +449,26 @@ body:has(.theme-grid) .leave { margin-top: 16px; }
   line-height: 1.35;
 }
 .rules-list li:first-child { border-top: none; }
+/* The lobby's theme list, where players hide themes from the game. */
+.lobby-themes {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 16px;
+  margin: 0 0 16px;
+}
+.lobby-themes-title { font-weight: 700; color: var(--navy); cursor: pointer; }
+.lobby-themes[open] .lobby-themes-title { margin-bottom: 8px; }
+.lobby-theme-list { display: flex; flex-wrap: wrap; gap: 6px; }
+button.lobby-theme { padding: 6px 12px; font-size: 0.9rem; line-height: 1.2; overflow-wrap: anywhere; }
+button.lobby-theme.hidden-theme {
+  color: var(--muted);
+  background: var(--bg);
+  border-color: var(--border);
+  text-decoration: line-through;
+}
+button.lobby-theme.hidden-theme::before { content: "\1F6AB"; display: inline-block; margin-right: 4px; }
 .rules-when { font-weight: 600; color: var(--ink); }
 .rules-what { color: var(--muted); text-align: right; }
 @media (max-width: 420px) {

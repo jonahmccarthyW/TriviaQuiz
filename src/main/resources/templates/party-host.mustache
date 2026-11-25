@@ -112,11 +112,35 @@
 
 <p><a href="/">Back to home</a></p>
 
-<script src="/js/room.js?v=13"></script>
+<script src="/js/room.js?v=14"></script>
 <script src="/js/chat.js?v=2"></script>
 <script>
   startRoom({ code: '{{code}}', mount: document.getElementById('room'), host: true });
   startChat({ code: '{{code}}' });
+
+  function showHidden(button, hidden) {
+    var item = button.closest('li');
+    item.classList.toggle('theme-hidden', hidden);
+    item.querySelector('.hidden-tag').hidden = !hidden;
+    button.textContent = hidden ? 'Show' : 'Hide';
+  }
+
+  function showHiddenCount(hiddenCount) {
+    var count = document.getElementById('hidden-count');
+    count.textContent = hiddenCount + ' hidden.';
+    count.hidden = hiddenCount === 0;
+  }
+
+  // In the lobby players can hide themes from their phones; room.js passes on the room's list.
+  document.getElementById('room').addEventListener('lobbythemes', function (event) {
+    var hidden = {};
+    event.detail.forEach(function (theme) { hidden[theme.id] = theme.hidden; });
+    document.querySelectorAll('button[data-hide-theme]').forEach(function (button) {
+      var id = button.dataset.hideTheme;
+      if (id in hidden && !button.disabled) { showHidden(button, hidden[id]); }
+    });
+    showHiddenCount(event.detail.filter(function (theme) { return theme.hidden; }).length);
+  });
 
   // Hide and Show update the list in place, so the page doesn't reload and jump to the top.
   document.addEventListener('click', function (event) {
@@ -131,13 +155,8 @@
     })
       .then(function (response) { return response.ok ? response.json() : Promise.reject(response); })
       .then(function (result) {
-        var item = button.closest('li');
-        item.classList.toggle('theme-hidden', result.hidden);
-        item.querySelector('.hidden-tag').hidden = !result.hidden;
-        button.textContent = result.hidden ? 'Show' : 'Hide';
-        var count = document.getElementById('hidden-count');
-        count.textContent = result.hiddenCount + ' hidden.';
-        count.hidden = result.hiddenCount === 0;
+        showHidden(button, result.hidden);
+        showHiddenCount(result.hiddenCount);
       })
       .catch(function () { alert("Couldn't change that theme. Try again, or refresh the page."); })
       .then(function () { button.disabled = false; });

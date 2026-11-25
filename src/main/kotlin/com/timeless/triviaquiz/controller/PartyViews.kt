@@ -44,6 +44,9 @@ data class PartyPlayerView(
 /** [flagged] is whether this viewer has marked it as a bad theme. The count is only on the host page. */
 data class ThemeChoiceView(val id: String, val name: String, val flagged: Boolean = false)
 
+/** A theme in the lobby's list, where players waiting for the start can hide it from this room's game. */
+data class LobbyThemeView(val id: String, val name: String, val hidden: Boolean)
+
 /**
  * A Theme Party question while it is still being answered. As with [QuestionView], it exists to
  * omit `correctAnswer`, and here `explanation` too. [yourAnswer] is only ever the viewer's own.
@@ -135,10 +138,17 @@ data class PartyView(
     /** Which tiebreak question this is, from 1. */
     val tiebreakRound: Int = 0,
     /** Only in the lobby. */
-    val rules: PartyRulesView? = null
+    val rules: PartyRulesView? = null,
+    /** Only in the lobby: every valid theme, hidden ones included, by name. */
+    val lobbyThemes: List<LobbyThemeView>? = null
 )
 
-/** Call with [GameRoom.mutex] held. The result shares no mutable state with the room. */
+/**
+ * Call with [GameRoom.mutex] held. The result shares no mutable state with the room.
+ *
+ * In the lobby [themes] must be every valid theme, hidden ones included, for the lobby's list. Once
+ * a game has started it must leave out the hidden ones, as it is what the picker is dealt from.
+ */
 internal fun buildPartyView(room: GameRoom, viewerId: String?, themes: List<Theme>, now: Instant): PartyView {
     val removed = room.wasKicked(viewerId)
     val game = room.party
@@ -174,7 +184,10 @@ internal fun buildPartyView(room: GameRoom, viewerId: String?, themes: List<Them
             question = null,
             reveal = null,
             winners = emptyList(),
-            rules = PartyRulesView(limitThemes = room.limitThemes, bonusNeedsSecond = room.bonusNeedsSecond)
+            rules = PartyRulesView(limitThemes = room.limitThemes, bonusNeedsSecond = room.bonusNeedsSecond),
+            lobbyThemes = themes
+                .map { LobbyThemeView(it.id, it.name, it.id in room.hiddenThemes) }
+                .sortedBy { it.name.lowercase() }
         )
 
     // A tiebreak has no picker.

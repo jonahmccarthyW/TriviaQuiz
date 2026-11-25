@@ -47,6 +47,7 @@
     var settlingUntil = 0;
     var wasYourPick = false;
     var flagMode = false; // While on, tapping a theme flags it as bad instead of picking it.
+    var lobbyThemesOpen = false; // Whether the lobby's theme list is open, kept when the lobby redraws.
     var nextAt = 0; // When Next becomes tappable after a reveal.
     var nextTimer = null;
     var updaters = [];
@@ -271,6 +272,50 @@
       content.appendChild(card);
     }
 
+    function lobbyTheme(party, id) {
+      return (party.lobbyThemes || []).filter(function (theme) { return theme.id === id; })[0];
+    }
+
+    // While waiting for the start, players can hide themes from this game. The list is the room's,
+    // shared with every player and the host, so each button shows what the server last said.
+    function addLobbyThemes(party) {
+      var box = el('details', 'lobby-themes');
+      box.open = lobbyThemesOpen;
+      box.addEventListener('toggle', function () { lobbyThemesOpen = box.open; });
+      var summary = el('summary', 'lobby-themes-title');
+      box.appendChild(summary);
+      box.appendChild(el('p', 'question-meta',
+        'Tap a theme to hide it from this game, so nobody can pick it. Tap it again to bring it back.'));
+
+      var list = el('div', 'lobby-theme-list');
+      party.lobbyThemes.forEach(function (theme) {
+        var button = el('button', 'lobby-theme', theme.name);
+        button.type = 'button';
+        button.addEventListener('click', function () {
+          var current = lobbyTheme(latest.party, theme.id);
+          if (current) { send('hide', { theme: theme.id, hidden: !current.hidden }); }
+        });
+        updaters.push(function (current) {
+          var now = lobbyTheme(current, theme.id);
+          var hidden = !!(now && now.hidden);
+          button.classList.toggle('hidden-theme', hidden);
+          button.setAttribute('aria-pressed', String(hidden));
+          button.title = hidden ? 'Hidden from this game. Tap to show it again.' : 'Tap to hide it from this game';
+          // Not disabled while a tap is sent, or the whole list would flash grey. A double tap
+          // is harmless: both ask for the same state.
+          button.disabled = !now;
+        });
+        list.appendChild(button);
+      });
+      box.appendChild(list);
+
+      updaters.push(function (current) {
+        var hidden = (current.lobbyThemes || []).filter(function (theme) { return theme.hidden; }).length;
+        summary.textContent = 'Themes (' + party.lobbyThemes.length + ')' + (hidden ? ': ' + hidden + ' hidden' : '');
+      });
+      content.appendChild(box);
+    }
+
     // A tiebreak question's reveal: who won, or that nobody did and another question follows.
     function addTiebreakReveal(party, canAnswer, inGame) {
       var item = party.reveal;
@@ -375,6 +420,10 @@
 
       // Players wait here for the host, so it's a good moment to explain the scoring.
       if (party.stage === 'lobby' && party.rules && !isHost) { addRules(party.rules); }
+      // The host hides themes from their own list on the host page.
+      if (party.stage === 'lobby' && inGame && !isHost && party.lobbyThemes && party.lobbyThemes.length) {
+        addLobbyThemes(party);
+      }
       if (party.themes) { addThemes(party); }
       if (party.question) { addQuestion(party, canAnswer); }
       if (party.reveal) { addReveal(party, canAnswer, inGame); }
@@ -411,6 +460,8 @@
         state.notice,
         state.canStart,
         party.rules, // The host may change a setting the guide mentions.
+        // Themes added or removed. Hiding one only updates its button, so this leaves that out.
+        party.lobbyThemes && party.lobbyThemes.map(function (theme) { return [theme.id, theme.name]; }),
         // Distinguishes a restarted game, whose question differs at the same stage and turn.
         party.question && [party.question.question, party.question.answers]
       ]);
@@ -440,6 +491,11 @@
         turnKey = nextTurnKey;
       }
       update();
+
+      // Players can hide themes in the lobby too, so the host page's own theme list follows along.
+      if (isHost && party.lobbyThemes) {
+        mount.dispatchEvent(new CustomEvent('lobbythemes', { detail: party.lobbyThemes }));
+      }
 
       var yourPick = party.stage === 'picking' && party.yourPick;
       if (yourPick && !wasYourPick && global.navigator && global.navigator.vibrate) {

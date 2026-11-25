@@ -86,6 +86,8 @@ data class PartyNextRequest(val version: Long)
 
 data class PartyFlagRequest(val theme: String)
 
+data class PartyHideRequest(val theme: String, val hidden: Boolean)
+
 /**
  * The polling API every device in a room talks to. One endpoint to read the room and one to answer
  * (Theme Party rooms have their own pick, answer and next endpoints); all return the same tailored view so
@@ -251,6 +253,35 @@ class RoomApiController(
         return partyResponse(room, viewerId, accepted)
     }
 
+    /**
+     * Lets a player waiting in the lobby hide a theme from this room's game, or show it again: the
+     * same list the host's Hide and Show change. Only before the start. [PartyHideRequest.hidden]
+     * is the state wanted rather than a toggle, so two players hiding the same theme agree. No
+     * version bump, as nothing else in the lobby changes.
+     */
+    @PostMapping("/api/room/{code}/party/hide")
+    suspend fun hideTheme(
+        @PathVariable code: String,
+        @RequestBody body: PartyHideRequest,
+        session: HttpSession
+    ): ResponseEntity<RoomStateView> {
+        val room = gameRoomService.find(code) ?: return ResponseEntity.notFound().build()
+        val viewerId = viewerId(session, room)
+        // Matched against the folder listing, hidden ones included, so they can be shown again.
+        val known = withContext(Dispatchers.IO) { themeLoader.load().themes }.any { it.id == body.theme }
+
+        val accepted = room.mutex.withLock {
+            val allowed = known && room.party == null && room.phase == RoomPhase.LOBBY &&
+                room.lobby.any { it.playerId == viewerId }
+            if (allowed) {
+                if (body.hidden) room.hiddenThemes.add(body.theme) else room.hiddenThemes.remove(body.theme)
+                room.keepAlive()
+            }
+            allowed
+        }
+        return partyResponse(room, viewerId, accepted)
+    }
+
     private suspend fun partyResponse(
         room: GameRoom,
         viewerId: String?,
@@ -269,6 +300,18 @@ class RoomApiController(
      * for one deals it. That is usually the response to the Next that caused the wait.
      */
     private suspend fun readPartyState(room: GameRoom, viewerId: String?): RoomStateView {
+        // The lobby lists every theme, hidden ones too, so players can hide or show them.
+        if (room.party == null) {
+            val all = withContext(Dispatchers.IO) { themeLoader.load().themes }
+            room.mutex.withLock {
+                // Checked again: the host may have started while the themes loaded, and a started
+                // game must only be given the themes that aren't hidden.
+                if (room.party == null) {
+                    room.keepAlive()
+                    return buildPartyState(room, viewerId, all)
+                }
+            }
+        }
         var timedOut: PartyTurn? = null
         room.mutex.withLock {
             room.keepAlive()
